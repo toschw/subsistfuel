@@ -1,0 +1,230 @@
+---
+title: "Subsistence fuel analysis"
+author: "Tobias Schwoerer"
+date: "December 21, 2017"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+#Importing data
+```{r}
+library(dplyr)
+#data <- read.csv("C:/Users/Toby/Dropbox/DATA/Dropbox/DATA/2011_Schwoerer_subsistence_fuel_survey/Subset4R.csv",stringsAsFactor=FALSE)
+data <- read.csv("D:/Dropbox/DATA/2011_Schwoerer_subsistence_fuel_survey/Subset4R.csv",stringsAsFactor=FALSE)
+#eliminating missing data and equipment not used
+data2 <- subset(data, !is.na(an_gal))
+data2 <- subset(data2, used=="Used this equipment")
+
+#eliminating Chainsaws and generators
+data2 <- data2%>%
+  filter(resname!="Chainsaw" &resname!="Generator")
+
+#subsetting data into transportation modes
+boat <- subset(data2, boat==1 & used=="Used this equipment")
+atv <- subset(data2, atv==1& used=="Used this equipment")
+car <- subset(data2, car==1& used=="Used this equipment")
+sm <- subset(data2, sm==1& used=="Used this equipment")
+```
+
+
+#Models to use, linear mixed models
+For high-level discussion see: https://www.theanalysisfactor.com/extensions-general-linear-model/
+Response variable: an_gal, the annual amount of gasoline consumed in gallons
+
+##What probability distribution best fits an_gal
+See https://ase.tufts.edu/gsc/gradresources/guidetomixedmodelsinr/mixed%20model%20guide.html
+```{r}
+library(MASS)
+library(car)
+library(dplyr)
+
+gal_hh <- data2 %>%
+  group_by(hhid)%>%
+  summarise(an_gal = sum(an_gal),
+            usenum = sum(usenum))
+#normal distribution fit
+qqp(gal_hh$an_gal, "norm")
+qqp(gal_hh$an_gal, "lnorm")
+#gamma distribution fit
+gamma <- fitdistr(gal_hh$an_gal, "gamma")
+qqp(gal_hh$an_gal, "gamma", shape = gamma$estimate[[1]], rate = gamma$estimate[[2]])
+
+#exponential distribution fit
+qqplot(x=qexp(ppoints(100)), y=gal_hh$an_gal, main="Exponential Q-Q Plot",
+       xlab="Theoretical Quantiles", ylab= "Your Data Quantiles")
+qqline(gal_hh$an_gal, distribution=qexp)
+```
+
+Result: 
+The gamma distribution is the best fit for our reponse variable, as expected an_gal is not normally distributed. Since the gamma only handles positive numbers, so that is good. 
+The lognormal distribution may also be acceptable. 
+
+Outliers:
+There are three outliers consuming more than 6000gal/year.
+
+##Creating dataset for regression 
+For now, we leave out the modes and aggregate fuel consumption across modes resulting in a dataset where each row is data for each household. There are no mode-specific variables
+
+an_gal_total ~ sum_edible_wei_lbs + sum_mean_dist_M 
+
+levels: hhid, commname, 
+
+```{r}
+#grouping data: each row is one household 
+hh_data <- data2%>%
+  group_by(hhid)%>%
+  mutate(an_gal_total=sum(an_gal))%>%
+  subset(!is.na(price), select=-c(an_gal, UniqueID, survey_id, resname, fuel, saw, sm, atv, car, boat, vehicles))%>%
+  distinct()
+
+#eliminating NAs for edible weight variable
+hh_data2 <- subset(hh_data, !is.na(sum_edible_wei_lbs))
+#eliminating records that are below 1gal in gasoline consumption. 
+hh_data2 <- subset(hh_data2, an_gal_total>1)
+```
+
+
+# Data exploration
+```{r}
+library(PerformanceAnalytics)
+my_data <- hh_data2[, c("an_gal_total","sum_edible_wei_lbs", "sum_mean_dist_M","usenum","FishSumEdible","LargeGameSumEdible")]
+my_car <- car[, c("an_gal","sum_edible_wei_lbs", "sum_mean_dist_M","usenum","FishSumEdible","LargeGameSumEdible")]
+my_sm <-sm[, c("an_gal","sum_edible_wei_lbs", "sum_mean_dist_M","usenum","FishSumEdible","LargeGameSumEdible")]
+my_atv <- atv[, c("an_gal","sum_edible_wei_lbs", "sum_mean_dist_M","usenum","FishSumEdible","LargeGameSumEdible")]
+my_boat <- boat[, c("an_gal","sum_edible_wei_lbs", "sum_mean_dist_M","usenum","FishSumEdible","LargeGameSumEdible")]
+pooled_boat <- boat[, c("an_gal","sum_edible_wei_lbs", "sum_mean_dist_M","usenum","FishSumEdible","LargeGameSumEdible","commname","hhid")]
+chart.Correlation(my_data, histogram=TRUE, pch=19)
+chart.Correlation(my_car, histogram=TRUE, pch=19)
+chart.Correlation(my_sm, histogram=TRUE, pch=19)
+chart.Correlation(my_atv, histogram=TRUE, pch=19)
+chart.Correlation(my_boat, histogram=TRUE, pch=19)
+```
+Results:
+an_gal_total ~ sum_edible_wei_lbs 0.39
+an_gal_total ~ sum_mean_dist_M 0.038
+car: an_gal ~ FishSumEdible 0.31
+sm: an_gal ~ sum_edible_wei_lbs 0.2
+atv: an_gal ~ sum_edible_wei_lbs 0.26
+boat: an_gal ~ usenum 0.48, FishSumEdible 0.31, sum_edible_wei_lbs 0.27, LargeGameSumEdible 0.18
+
+
+
+#Fixed effects model
+model indicates the model to be estimated : "pooling" is just the OLS estimation (equivalent to a call to lm), "between" performs the estimation on the individual or time means, "within" on the deviations from the individual or/and time mean, "fd" on the first differences and "random" perform a feasible generalized least squares estimation which takes into account the correlation induced by the presence of individual and/or time effects.
+```{r}
+library(plm)
+fixed <- plm(an_gal ~ usenum + FishSumEdible + LargeGameSumEdible , data=pooled_boat, index = "hhid", model="random", effect = "individual", na.action = na.exclude)
+summary(fixed)
+```
+
+
+
+
+
+#Linear model
+```{r}
+linearMod <- lm(an_gal_total ~ sum_edible_wei_lbs , data=hh_data2)  # build linear regression model on full data
+summary(linearMod)
+
+
+
+
+
+
+```
+
+
+
+
+
+
+
+
+
+##PQL Fitting a GLMM model with multivariate normal random effects, using Penalized Quasi-Likelihood.
+Test whether we can use penalized quasilikelihood (PQL) or not. PQL is a flexible technique that can deal with non-normal data, unbalanced design, and crossed random effects. However, it produces biased estimates if your response variable fits a discrete count distribution, like Poisson or binomial, and the mean is less than 5 - or if your response variable is binary.
+
+Note, Make absolutely sure that any an_gal_total < 1 is eleliminated from the data, otherwise the following code will not run. 
+
+
+```{r}
+library(nlme)
+PQL <- glmmPQL(an_gal_total ~ sum_edible_wei_lbs + sum_mean_dist_M, random = ~1 | commname, family = Gamma(link="inverse"), data = hh_data2, verbose = FALSE)
+summary(PQL)
+
+```
+the option random=~1|commname is added to the model to indicate that commname is the random term.
+The 1 indicates that an intercept is to be fitted for each level of the random variable. Source: https://rcompanion.org/handbook/G_03.html
+
+Turns out PQL is not as reliable method https://bbolker.github.io/mixedmodels-misc/glmmFAQ.html
+
+##Bayesian approach
+Following https://ase.tufts.edu/gsc/gradresources/guidetomixedmodelsinr/mixed%20model%20guide.html
+
+```{r}
+library(MCMCglmm)
+prior = list(R = list(V = 1, n = 0, fix = 1), G = list(G1 = list(V = 1, n = 1),
+    G2 = list(V = 1, n = 1), G3 = list(V = 1, n = 1), G4 = list(V = 1, n = 1),
+    G5 = list(V = 1, n = 1)))
+set.seed(45)
+MCMC <- MCMCglmm(an_gal_total ~ 1, random = ~year + farmer + place + gen + district,
+    data = hh_data2, family = Gamma(link="inverse"), prior = prior, verbose = FALSE)
+summary(MCMC)
+```
+This not working out
+
+## Laplace approximation
+Source: https://ase.tufts.edu/gsc/gradresources/guidetomixedmodelsinr/mixed%20model%20guide.html
+
+```{r}
+library(mlmRev)
+
+GHQ <- glmer(an_gal_total ~ sum_edible_wei_lbs  + (1 | commname), data = hh_data2,
+    family = Gamma(link="inverse"), nAGQ = 25)  # Set nAGQ to # of desired iterations
+```
+
+
+
+
+
+
+
+
+
+
+# Cleaning data:
+- NA as 0
+- eliminate records without distance
+
+# Creating a panel
+
+# Creating new variables (perhaps not needed if dummy variable model):
+```{r}
+atvs <- usenum*atv
+boats <- usenum*boat
+cars <- usenum*cars
+sms <- usenum*sm
+```
+
+
+
+key: hhid
+group: commname
+predicted variable: an_gal
+
+# Model needs to:
+- account for heterogeneity across groups
+
+
+2 models:
+1) an_gal = f(sum_edible_wei_lbs, sum_mean_dist_M)
+2) an_gal = f(FishSumEdible, LargeGameSumEdible, OtherSumEdible, SmallGameSumEdible, VegetationSumEdible, FishSumDist, LargeGameSumDist, OtherSumDist, SmallGameSumDist, VegetationSumDist, atvs, boats, sms, cars)
+
+
+
+---
+```{r}
+data <- read.csv("Merged_Data3.csv",stringsAsFactors = FALSE)
+  
+```
