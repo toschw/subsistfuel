@@ -27,7 +27,6 @@ car <- subset(data2, car==1& used=="Used this equipment")
 sm <- subset(data2, sm==1& used=="Used this equipment")
 ```
 
-
 #Models to use, linear mixed models
 For high-level discussion see: https://www.theanalysisfactor.com/extensions-general-linear-model/
 Response variable: an_gal, the annual amount of gasoline consumed in gallons
@@ -40,9 +39,10 @@ library(car)
 library(dplyr)
 
 gal_hh <- data2 %>%
-  group_by(hhid)%>%
+  group_by(ID)%>%
   summarise(an_gal = sum(an_gal),
-            usenum = sum(usenum))
+            usenum = sum(usenum))%>%
+  filter(an_gal!=0)
 #normal distribution fit
 qqp(gal_hh$an_gal, "norm")
 qqp(gal_hh$an_gal, "lnorm")
@@ -57,35 +57,52 @@ qqline(gal_hh$an_gal, distribution=qexp)
 ```
 
 Result: 
-The gamma distribution is the best fit for our reponse variable, as expected an_gal is not normally distributed. Since the gamma only handles positive numbers, so that is good. 
-The lognormal distribution may also be acceptable. 
+The normal distribution is close enough so we don't need to do any Penalized Quasi-Likelihood estimation.  
 
 Outliers:
-There are three outliers consuming more than 6000gal/year.
+There are four outliers consuming more than ca. 5000 gal/year. We eliminate these outliers below. 
 
 ##Creating dataset for regression 
 For now, we leave out the modes and aggregate fuel consumption across modes resulting in a dataset where each row is data for each household. There are no mode-specific variables
 
 an_gal_total ~ sum_edible_wei_lbs + sum_mean_dist_M 
 
-levels: hhid, commname, 
+levels: ID, commname, 
 
 ```{r}
 #grouping data: each row is one household 
 hh_data <- data2%>%
-  group_by(hhid)%>%
-  mutate(an_gal_total=sum(an_gal))%>%
-  subset(!is.na(price), select=-c(an_gal, UniqueID, survey_id, resname, fuel, saw, sm, atv, car, boat, vehicles))%>%
+  group_by(ID)%>%
+  mutate(an_gal_total=sum(an_gal),
+         usenum_total=sum(usenum))%>%
+  subset(!is.na(price), select=-c(an_gal, survey_id, UniqueID, resname, fuel, saw, sm, atv, car, boat, vehicles))%>%
   distinct()
 
 #eliminating NAs for edible weight variable
 hh_data2 <- subset(hh_data, !is.na(sum_edible_wei_lbs))
 #eliminating records that are below 1gal in gasoline consumption. 
 hh_data2 <- subset(hh_data2, an_gal_total>1)
+
+#Creating a community ID
+hh_data2$commID <- with(hh_data2, ifelse(commname=="Alatna",1,ifelse(commname=="Allakaket",2,ifelse(commname=="Anaktuvuk Pass",3,ifelse(commname=="Beaver",4,ifelse(commname=="Bettles",5,ifelse(commname=="Dot Lake",6,ifelse(commname=="Dry Creek",7,ifelse(commname=="Evansville",8,ifelse(commname=="Healy Lake",9,ifelse(commname=="Tok",10,11)))))))))))
+hh_data2$commID <- as.factor(hh_data2$commID)
+hh_data2$ID <- as.factor(hh_data2$ID)
+
+#eliminating outliers consuming more than 5000 gallons
+hh_data2 <- subset(hh_data2,an_gal_total <5000)
+#checking normal fit of the data
+#normal distribution fit
+qqp(hh_data2$an_gal_total, "norm")
+qqp(hh_data2$an_gal_total, "lnorm")
+
+#calculating sampel size per community
+samples <- hh_data2%>%
+  group_by(commname)%>%
+  summarise(n = n_distinct(ID))
 ```
 
 
-# Data exploration
+# Data exploration, looking for correlations
 ```{r}
 library(PerformanceAnalytics)
 my_data <- hh_data2[, c("an_gal_total","sum_edible_wei_lbs", "sum_mean_dist_M","usenum","FishSumEdible","LargeGameSumEdible")]
@@ -93,7 +110,7 @@ my_car <- car[, c("an_gal","sum_edible_wei_lbs", "sum_mean_dist_M","usenum","Fis
 my_sm <-sm[, c("an_gal","sum_edible_wei_lbs", "sum_mean_dist_M","usenum","FishSumEdible","LargeGameSumEdible")]
 my_atv <- atv[, c("an_gal","sum_edible_wei_lbs", "sum_mean_dist_M","usenum","FishSumEdible","LargeGameSumEdible")]
 my_boat <- boat[, c("an_gal","sum_edible_wei_lbs", "sum_mean_dist_M","usenum","FishSumEdible","LargeGameSumEdible")]
-pooled_boat <- boat[, c("an_gal","sum_edible_wei_lbs", "sum_mean_dist_M","usenum","FishSumEdible","LargeGameSumEdible","commname","hhid")]
+pooled_boat <- boat[, c("an_gal","sum_edible_wei_lbs", "sum_mean_dist_M","usenum","FishSumEdible","LargeGameSumEdible","commname","ID")]
 chart.Correlation(my_data, histogram=TRUE, pch=19)
 chart.Correlation(my_car, histogram=TRUE, pch=19)
 chart.Correlation(my_sm, histogram=TRUE, pch=19)
@@ -101,38 +118,269 @@ chart.Correlation(my_atv, histogram=TRUE, pch=19)
 chart.Correlation(my_boat, histogram=TRUE, pch=19)
 ```
 Results:
-an_gal_total ~ sum_edible_wei_lbs 0.39
+an_gal_total ~ sum_edible_wei_lbs 0.21
 an_gal_total ~ sum_mean_dist_M 0.038
 car: an_gal ~ FishSumEdible 0.31
 sm: an_gal ~ sum_edible_wei_lbs 0.2
 atv: an_gal ~ sum_edible_wei_lbs 0.26
 boat: an_gal ~ usenum 0.48, FishSumEdible 0.31, sum_edible_wei_lbs 0.27, LargeGameSumEdible 0.18
 
+#Linear model
+```{r}
+linearMod <- lm(an_gal_total ~ sum_edible_wei_lbs , data=hh_data2)  # build linear regression model on full data
+summary(linearMod)
+```
+Everything is highly significant in a simple model where the predictor of annual gasoline consumption per household is household's annual weight harvested.
+
+The average subsistence household in 2011 consumed 551 gallons and for every lbs harveted an additional 0.1 gallons. 
+
+Compare this to what each US household on average consumed in motor gasoline in 2017. 126.22 million households consumed 143 billion gallons according to EIA. https://www.eia.gov/energyexplained/index.php?page=gasoline_use
+This translates to 1132 gallons per year and hh. 
 
 
 #Fixed effects model
 model indicates the model to be estimated : "pooling" is just the OLS estimation (equivalent to a call to lm), "between" performs the estimation on the individual or time means, "within" on the deviations from the individual or/and time mean, "fd" on the first differences and "random" perform a feasible generalized least squares estimation which takes into account the correlation induced by the presence of individual and/or time effects.
 ```{r}
 library(plm)
-fixed <- plm(an_gal ~ usenum + FishSumEdible + LargeGameSumEdible , data=pooled_boat, index = "hhid", model="random", effect = "individual", na.action = na.exclude)
+fixed <- plm(an_gal ~ usenum + FishSumEdible , data=pooled_boat, index = "ID", model="random", effect = "individual", na.action = na.exclude)
 summary(fixed)
 ```
 
 
-
-
-
-#Linear model
+# M1 Varying intercept model with no predictors (Variance components model)
+Following https://mc-stan.org/users/documentation/case-studies/tutorial_rstanarm.html#model-3-varying-intercept-and-slope-model-with-a-single-predictor
 ```{r}
-linearMod <- lm(an_gal_total ~ sum_edible_wei_lbs , data=hh_data2)  # build linear regression model on full data
-summary(linearMod)
-
-
-
-
-
-
+library(lme4)
+M1 <- lmer(formula = an_gal_total ~ 1 + (1 | commID), 
+           data = hh_data2, 
+           REML = FALSE)
+summary(M1)
 ```
+Results: 
+*Fixed effects*: 
+These measure the gasoline consumption averaged across the population of communities is estimated at 1932 gallons per household. U
+
+*Random effects*
+Thees measure both the between community and within-community variation. In specific, the between-community SD is estimated at 524.7 gallons, and the SD within-communities is estimated to be 1899.6 gallons. 
+
+
+# M2: Varying intercept model with a single predictor (sum of edible weight harvested)
+Following https://mc-stan.org/users/documentation/case-studies/tutorial_rstanarm.html#model-3-varying-intercept-and-slope-model-with-a-single-predictor
+```{r}
+M2 <- lmer(formula = an_gal_total ~ 1 + sum_edible_wei_lbs + (1 | commname), 
+           data = hh_data2, 
+           REML = FALSE)
+summary(M2)
+commIntercepts <- ranef(M2)$commname
+```
+
+
+#M3: Varying intercept and slope model with a single predictor
+```{r}
+M3 <- lmer(formula = an_gal_total ~ 1 + sum_edible_wei_lbs + usenum_total + (1 + sum_edible_wei_lbs + usenum_total | commname), 
+           data = hh_data2, 
+           REML = FALSE)
+summary(M3)
+commInterceptsM3 <- ranef(M3)$commname
+```
+
+
+# Complete-pooling regression
+```{r}
+J <- length(unique(hh_data2$commname))
+N <- nrow(hh_data2)
+
+#complete pooling model, blue solid line in plot
+pooled <- lm(formula = an_gal_total ~ sum_edible_wei_lbs + usenum_total,
+             data = hh_data2)
+a_pooled <- coef(pooled)[1]   # complete-pooling intercept
+b_pooled <- coef(pooled)[2]   # complete-pooling slope
+
+# No-pooling regression, red dashed line in plot
+nopooled <- lm(formula = an_gal_total ~ 0 + commname + sum_edible_wei_lbs + usenum_total,
+               data = hh_data2)
+a_nopooled <- coef(nopooled)[1:J]   # 11 no-pooling intercepts              
+b_nopooled <- coef(nopooled)[J+1]
+
+# Partial pooling (multilevel) regression, purple dotted line in plot
+a_part_pooled <- coef(M3)$commname[, 1]
+b_part_pooled <- coef(M3)$commname[, 2]
+```
+
+Plotting community -specific regression lines for edible weights:
+```{r}
+# setting axis
+y <- hh_data2$an_gal_total
+x <- as.numeric(hh_data2$sum_edible_wei_lbs) - 1 + runif(N, -.05, .05)
+schid <- hh_data2$commname
+
+# generate data frame
+df <- data.frame(y, x, schid)
+
+
+# (2) Assign complete-pooling, no-pooling, partial pooling estimates
+df$a_pooled <- a_pooled 
+df$b_pooled <- b_pooled
+df$a_nopooled <- a_nopooled[df$schid]
+df$b_nopooled <- b_nopooled
+df$a_part_pooled <- a_part_pooled[df$schid]
+df$b_part_pooled <- b_part_pooled[df$schid]
+
+# (3) Plot regression fits for the 11 communities
+library(ggplot2)
+ggplot(data = df, 
+       aes(x = x, y = y)) + 
+  facet_wrap(facets = ~ schid, 
+             ncol = 4) + 
+  theme_bw() +
+  geom_jitter(position = position_jitter(width = .05, 
+                                         height = 0)) +
+  geom_abline(aes(intercept = a_pooled, 
+                  slope = b_pooled), 
+              linetype = "solid", 
+              color = "blue", 
+              size = 0.5) +
+  geom_abline(aes(intercept = a_nopooled, 
+                  slope = b_nopooled), 
+              linetype = "longdash", 
+              color = "red", 
+              size = 0.5) + 
+  geom_abline(aes(intercept = a_part_pooled, 
+                  slope = b_part_pooled), 
+              linetype = "dotted", 
+              color = "purple", 
+              size = 0.7) + 
+ 
+                  
+  labs(title = "Complete-pooling, No-pooling, and Partial pooling estimates",
+       x = "Annual edible harvest in lbs", 
+       y = "Annual consumption of gasoline in gal")+theme_bw( base_family = "serif")
+```
+
+Plotting community -specific regression lines for edible weights:
+```{r}
+# setting axis
+y <- hh_data2$an_gal_total
+x <- as.numeric(hh_data2$usenum_total) - 1 + runif(N, -.05, .05)
+schid <- hh_data2$commname
+
+# generate data frame
+df <- data.frame(y, x, schid)
+
+
+# (2) Assign complete-pooling, no-pooling, partial pooling estimates
+df$a_pooled <- a_pooled 
+df$b_pooled <- b_pooled
+df$a_nopooled <- a_nopooled[df$schid]
+df$b_nopooled <- b_nopooled
+df$a_part_pooled <- a_part_pooled[df$schid]
+df$b_part_pooled <- b_part_pooled[df$schid]
+
+# (3) Plot regression fits for the 11 communities
+library(ggplot2)
+ggplot(data = df, 
+       aes(x = x, y = y)) + 
+  facet_wrap(facets = ~ schid, 
+             ncol = 4) + 
+  theme_bw() +
+  geom_jitter(position = position_jitter(width = .05, 
+                                         height = 0)) +
+  geom_abline(aes(intercept = a_pooled, 
+                  slope = b_pooled), 
+              linetype = "solid", 
+              color = "blue", 
+              size = 0.5) +
+  geom_abline(aes(intercept = a_nopooled, 
+                  slope = b_nopooled), 
+              linetype = "longdash", 
+              color = "red", 
+              size = 0.5) + 
+  geom_abline(aes(intercept = a_part_pooled, 
+                  slope = b_part_pooled), 
+              linetype = "dotted", 
+              color = "purple", 
+              size = 0.7) + 
+ 
+                  
+  labs(title = "Complete-pooling, No-pooling, and Partial pooling estimates",
+       x = "number of vehicles operated", 
+       y = "Annual consumption of gasoline in gal")+theme_bw( base_family = "serif")
+```
+
+
+
+
+
+
+##Bayesian approach
+https://mc-stan.org/users/documentation/case-studies/tutorial_rstanarm.html#model-3-varying-intercept-and-slope-model-with-a-single-predictor
+
+```{r}
+library(rstanarm)
+M3_stanlmer <- stan_lmer(formula = an_gal_total ~ 1 + sum_edible_wei_lbs + (1 + sum_edible_wei_lbs | commname), data = hh_data2, seed = 349)
+
+prior_summary(object = M3_stanlmer)
+```
+
+```{r}
+M3_stanlmer
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#standardizing both, an_gal_total and sum_edible_wei_lbs
+calling them gal_stand and edi_stand respectively
+
+```{r}
+mean_gal <- mean(hh_data2$an_gal_total)
+sd_gal <- sd(hh_data2$an_gal_total)
+mean_lbs <- mean(hh_data2$sum_edible_wei_lbs)
+sd_lbs <- sd(hh_data2$sum_edible_wei_lbs)
+
+hh_data2$gal_stand <- with(hh_data2, (an_gal_total - mean_gal)/sd_gal)
+hh_data2$edi_stand <- with(hh_data2, (sum_edible_wei_lbs - mean_lbs)/sd_lbs)
+```
+
+#M4: Varying intercept and slope model with a single predictor rescaled
+```{r}
+M4 <- lmer(formula = an_gal_total ~ 1 + edi_stand + (1 + edi_stand | commname), 
+           data = hh_data2, 
+           REML = FALSE)
+summary(M4)
+commInterceptsM4 <- ranef(M4)$commname
+```
+
+Estimating intercepts and slope in each community in three ways then graphing those
+
+
+
+
 
 
 
@@ -149,8 +397,8 @@ Note, Make absolutely sure that any an_gal_total < 1 is eleliminated from the da
 
 
 ```{r}
-library(nlme)
-PQL <- glmmPQL(an_gal_total ~ sum_edible_wei_lbs + sum_mean_dist_M, random = ~1 | commname, family = Gamma(link="inverse"), data = hh_data2, verbose = FALSE)
+library(MASS)
+PQL <- glmmPQL(an_gal_total ~ sum_edible_wei_lbs, random = ~ 1 | commID, family = Gamma(link="inverse"), data = hh_data2, verbose = FALSE)
 summary(PQL)
 
 ```
@@ -159,20 +407,18 @@ The 1 indicates that an intercept is to be fitted for each level of the random v
 
 Turns out PQL is not as reliable method https://bbolker.github.io/mixedmodels-misc/glmmFAQ.html
 
-##Bayesian approach
-Following https://ase.tufts.edu/gsc/gradresources/guidetomixedmodelsinr/mixed%20model%20guide.html
 
-```{r}
-library(MCMCglmm)
-prior = list(R = list(V = 1, n = 0, fix = 1), G = list(G1 = list(V = 1, n = 1),
-    G2 = list(V = 1, n = 1), G3 = list(V = 1, n = 1), G4 = list(V = 1, n = 1),
-    G5 = list(V = 1, n = 1)))
-set.seed(45)
-MCMC <- MCMCglmm(an_gal_total ~ 1, random = ~year + farmer + place + gen + district,
-    data = hh_data2, family = Gamma(link="inverse"), prior = prior, verbose = FALSE)
-summary(MCMC)
-```
-This not working out
+
+
+
+
+
+
+
+
+
+
+
 
 ## Laplace approximation
 Source: https://ase.tufts.edu/gsc/gradresources/guidetomixedmodelsinr/mixed%20model%20guide.html
@@ -185,46 +431,3 @@ GHQ <- glmer(an_gal_total ~ sum_edible_wei_lbs  + (1 | commname), data = hh_data
 ```
 
 
-
-
-
-
-
-
-
-
-# Cleaning data:
-- NA as 0
-- eliminate records without distance
-
-# Creating a panel
-
-# Creating new variables (perhaps not needed if dummy variable model):
-```{r}
-atvs <- usenum*atv
-boats <- usenum*boat
-cars <- usenum*cars
-sms <- usenum*sm
-```
-
-
-
-key: hhid
-group: commname
-predicted variable: an_gal
-
-# Model needs to:
-- account for heterogeneity across groups
-
-
-2 models:
-1) an_gal = f(sum_edible_wei_lbs, sum_mean_dist_M)
-2) an_gal = f(FishSumEdible, LargeGameSumEdible, OtherSumEdible, SmallGameSumEdible, VegetationSumEdible, FishSumDist, LargeGameSumDist, OtherSumDist, SmallGameSumDist, VegetationSumDist, atvs, boats, sms, cars)
-
-
-
----
-```{r}
-data <- read.csv("Merged_Data3.csv",stringsAsFactors = FALSE)
-  
-```
