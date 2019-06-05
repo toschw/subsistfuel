@@ -97,8 +97,14 @@ qqp(hh_data2$an_gal_total, "lnorm")
 
 #calculating sampel size per community
 samples <- hh_data2%>%
-  group_by(commname)%>%
+  group_by(commname, river)%>%
   summarise(n = n_distinct(ID))
+
+
+#creating dataset without small sample communities
+hh_data_s <- hh_data2%>%
+  filter(commname!="Wiseman" & commname!="Beaver" & commname!="Dry Creek")
+
 ```
 
 
@@ -106,17 +112,21 @@ samples <- hh_data2%>%
 ```{r}
 library(PerformanceAnalytics)
 my_data <- hh_data2[, c("an_gal_total","sum_edible_wei_lbs", "sum_mean_dist_M","usenum","FishSumEdible","LargeGameSumEdible")]
+chart.Correlation(my_data, histogram=TRUE, pch=19)
+```
+
+
 my_car <- car[, c("an_gal","sum_edible_wei_lbs", "sum_mean_dist_M","usenum","FishSumEdible","LargeGameSumEdible")]
 my_sm <-sm[, c("an_gal","sum_edible_wei_lbs", "sum_mean_dist_M","usenum","FishSumEdible","LargeGameSumEdible")]
 my_atv <- atv[, c("an_gal","sum_edible_wei_lbs", "sum_mean_dist_M","usenum","FishSumEdible","LargeGameSumEdible")]
 my_boat <- boat[, c("an_gal","sum_edible_wei_lbs", "sum_mean_dist_M","usenum","FishSumEdible","LargeGameSumEdible")]
 pooled_boat <- boat[, c("an_gal","sum_edible_wei_lbs", "sum_mean_dist_M","usenum","FishSumEdible","LargeGameSumEdible","commname","ID")]
-chart.Correlation(my_data, histogram=TRUE, pch=19)
+
 chart.Correlation(my_car, histogram=TRUE, pch=19)
 chart.Correlation(my_sm, histogram=TRUE, pch=19)
 chart.Correlation(my_atv, histogram=TRUE, pch=19)
 chart.Correlation(my_boat, histogram=TRUE, pch=19)
-```
+
 Results:
 an_gal_total ~ sum_edible_wei_lbs 0.21
 an_gal_total ~ sum_mean_dist_M 0.038
@@ -182,7 +192,403 @@ M3 <- lmer(formula = an_gal_total ~ 1 + sum_edible_wei_lbs + usenum_total + (1 +
            REML = FALSE)
 summary(M3)
 commInterceptsM3 <- ranef(M3)$commname
+isSingular(M2, tol = 1e-05)
 ```
+
+Best model to fit, AIC 2035, no fuel price, random intercept model
+```{r}
+Mtest <- lmer(formula = an_gal_total ~ 1 + FishSumEdible +LargeGameSumEdible + usenum_total   + comm_fuel_price + (1 | commname), 
+           data = hh_data2, 
+           REML = FALSE)
+summary(Mtest)
+isSingular(Mtest, tol = 1e-05)
+commInterceptsMtest <- ranef(Mtest)$commname
+```
+
+Best intuitive model fit, AIC 2038, uses random intercept and slope model depending on fuel price
+```{r}
+Mtest2 <- lmer(formula = an_gal_total ~ 1 + FishSumEdible +LargeGameSumEdible + usenum_total   +  ( 1+ comm_fuel_price | commname), 
+           data = hh_data2, 
+           REML = FALSE)
+summary(Mtest2)
+commInterceptsMtest2 <- ranef(Mtest2)$commname
+isSingular(Mtest2, tol = 1e-05)
+```
+But the above has a singularity. Let's try a Bayesian model
+
+
+##Bayesian approach
+https://mc-stan.org/users/documentation/case-studies/tutorial_rstanarm.html#model-3-varying-intercept-and-slope-model-with-a-single-predictor
+
+```{r}
+library(rstanarm)
+Mtest2_stanlmer <- stan_lmer(formula = an_gal_total ~ 1 + FishSumEdible +LargeGameSumEdible + usenum_total   +  ( 1+ comm_fuel_price | commname), data = hh_data2, seed = 349)
+prior_summary(object = M3_stanlmer)
+Mtest2_stanlmer
+summary(Mtest2_stanlmer)
+```
+
+above model not working out, weird results, so sticking to the initial Mtest which did not have a singularity and running it as a bayesian model below
+```{r}
+library(rstanarm)
+M1_stanlmer <- stan_lmer(formula = an_gal_total ~ 1 + FishSumEdible +LargeGameSumEdible + usenum_total   + comm_fuel_price + (1 | commname), data = hh_data2, seed = 349)
+
+prior_summary(object = M1_stanlmer)
+M1_stanlmer
+summary(M1_stanlmer)
+
+#Evaluating model convergence and diagnose model
+
+plot(M1_stanlmer, "rhat")
+plot(M1_stanlmer, "ess")
+launch_shinystan(M1_stanlmer)
+```
+
+above model shows high uncertainty in community specific intercepts, what happens if we leave those out. Also, model predicts the lowest consumption as negative. But since we only care about the median point estimates and the uncertainty in general this may not be an issue. 
+
+```{r}
+library(rstanarm)
+M2 <- stan_glm(formula = an_gal_total ~  FishSumEdible +LargeGameSumEdible + usenum_total   + comm_fuel_price , data = hh_data2, seed = 349)
+
+prior_summary(object = M2)
+M2
+summary(M2)
+
+#Evaluating model convergence and diagnose model
+
+plot(M2, "rhat")
+plot(M2, "ess")
+launch_shinystan(M2)
+```
+
+as expected, the intercept will take all the effects that the comm-specific intercepts specified previously, so not a good model. Above is better. 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#Accessing the simulations and summarizing results
+following https://mc-stan.org/users/documentation/case-studies/tutorial_rstanarm.html#model-3-varying-intercept-and-slope-model-with-a-single-predictor
+```{r}
+sims <- as.matrix(M1_stanlmer)
+dim(sims)
+para_name <- colnames(sims)
+para_name
+
+# Obtain school-level varying intercept a_j
+# draws for overall mean
+mu_a_sims <- as.matrix(M1_stanlmer, 
+                       pars = "(Intercept)")
+# draws for 73 schools' school-level error
+u_sims <- as.matrix(M1_stanlmer, 
+                    regex_pars = "b\\[\\(Intercept\\) commname\\:")
+# draws for 73 schools' varying intercepts               
+a_sims <- as.numeric(mu_a_sims) + u_sims          
+
+# Obtain sigma_y and sigma_alpha^2
+# draws for sigma_y
+s_y_sims <- as.matrix(M1_stanlmer, 
+                       pars = "sigma")
+# draws for sigma_alpha^2
+s__alpha_sims <- as.matrix(M1_stanlmer, 
+                       pars = "Sigma[commname:(Intercept),(Intercept)]")
+```
+
+#Obtaining means, standard deviations, medians and 95% credible intervals.
+```{r}
+# Compute mean, SD, median, and 95% credible interval of varying intercepts
+
+# Posterior mean and SD of each alpha
+a_mean <- apply(X = a_sims,     # posterior mean
+                MARGIN = 2,
+                FUN = mean)
+a_sd <- apply(X = a_sims,       # posterior SD
+              MARGIN = 2,
+              FUN = sd)
+
+# Posterior median and 95% credible interval
+a_quant <- apply(X = a_sims, 
+                 MARGIN = 2, 
+                 FUN = quantile, 
+                 probs = c(0.025, 0.50, 0.975))
+a_quant <- data.frame(t(a_quant))
+names(a_quant) <- c("Q2.5", "Q50", "Q97.5")
+
+# Combine summary statistics of posterior simulation draws
+a_df <- data.frame(a_mean, a_sd, a_quant)
+round(a_df, 2)
+```
+
+We can produce a caterpillar plot to show the fully Bayes estimates for the school varying intercepts in rank order together with their 95% credible intervals.
+```{r}
+# Sort dataframe containing an estimated alpha's mean and sd for every school
+a_df <- a_df[order(a_df$a_mean), ]
+a_df$a_rank <- c(1 : dim(a_df)[1])  # a vector of school rank 
+
+# Plot school-level alphas's posterior mean and 95% credible interval
+ggplot(data = a_df, 
+       aes(x = a_rank, 
+           y = a_mean)) +
+  geom_pointrange(aes(ymin = Q2.5, 
+                      ymax = Q97.5),
+                  position = position_jitter(width = 0.1, 
+                                             height = 0)) + 
+  geom_hline(yintercept = mean(a_df$a_mean), 
+             size = 0.5, 
+             col = "red") + 
+  scale_x_continuous("Rank", 
+                     breaks = seq(from = 0, 
+                                  to = 80, 
+                                  by = 5)) + 
+  scale_y_continuous(expression(paste("varying intercept, ", alpha[j]))) + 
+  theme_bw( base_family = "serif")
+
+```
+
+# Making comparisons between individual communities, Aanktuvuk Pass and Tok
+```{r}
+comm_diff <- a_sims[, 3] - a_sims[, 7]
+# Investigate differences of two distributions
+mean <- mean(comm_diff)
+sd <- sd(comm_diff)
+quantile <- quantile(comm_diff, probs = c(0.025, 0.50, 0.975))
+quantile <- data.frame(t(quantile))
+names(quantile) <- c("Q2.5", "Q50", "Q97.5")
+diff_df <- data.frame(mean, sd, quantile)
+round(diff_df, 2)
+
+#proportion of Anaktuvuk Pass households with higher mean consumption than Tok hhs
+
+prop.table(table(a_sims[, 3] > a_sims[, 7]))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#Stroring model results
+Following https://www.drbanderson.com/2018/07/06/predicted-probabilities-with-rstanarm/
+```{r}
+library(broom)
+model.results <- tidy(M1_stanlmer) %>% 
+  mutate_if(is.numeric, funs(round(., 2)))
+model.results
+launch_shinystan(M1_stanlmer)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+conditions <- c("Alatna","Allakaket","Anaktuvuk Pass","Beaver","Bettles","Dot Lake","Dry Creek","Evansville","Healy Lake","Tok","Wiseman")
+```
+
+Next comes defining a new dataframe. The posterior_linpred function draws on R’s predict function, which can take in a new dataframe as input. We want to predict the probability of happiness at each of the four possible experimental conditions. But because our initial model contains covariates, we need to include these as well.
+
+This is where mean-centering the continuous predictors comes in handy, as does factoring the categorical variable, Gender…
+```{r}
+conditions.df <- data.frame(FishSumEdible = mean(hh_data2$FishSumEdible,na.rm = TRUE),
+                            LargeGameSumEdible = mean(hh_data2$LargeGameSumEdible,na.rm = TRUE),
+                            usenum_total = mean(hh_data2$usenum_total,na.rm = TRUE),
+                            comm_fuel_price = mean(hh_data2$comm_fuel_price,na.rm = TRUE))
+conditions.df
+```
+
+
+# Call the getProbabilities function to calculate the predicted probabilities.
+```{r}
+model.prob <- getProbabilities(M1_stanlmer)
+
+# Call the createProbTable function to create the predicted probabilities table.
+model.prob.table <- createProbTable(model.prob)
+model.prob.table %>% 
+  mutate_if(is.numeric, funs(100 * round(., 2))) # Convert to percentages
+```
+
+
+
+
+
+
+
+```{r}
+library(stanreg)
+library(dplyr)
+#ABC is the raw data
+ABC <- dplyr::select(hh_data2, commname, an_gal_total)
+#converting to tibble
+library(tibble)
+ABC <- as_tibble(ABC)
+
+
+pred_post <- posterior_predict(M1_stanlmer, newdata = ABC)
+dim(pred_post)
+```
+
+
+
+
+
+
+
+
+
+#extracting draws from the fit in tidy-format, then visualizing them
+https://cran.r-project.org/web/packages/tidybayes/vignettes/tidy-rstanarm.html
+
+```{r}
+library(magrittr)
+library(dplyr)
+library(forcats)
+library(tidyr)
+library(purrr)
+library(modelr)
+library(tidybayes)
+library(ggplot2)
+library(ggstance)
+library(ggridges)
+library(rstan)
+library(rstanarm)
+library(cowplot)
+library(RColorBrewer)
+library(gganimate)
+
+get_variables(Mtest_stanlmer)
+
+Mtest_stanlmer%>%
+  spread_draws(`(Intercept)`, b[,group]) %>%
+  mutate(condition_mean = `(Intercept)` + b) %>%
+  median_qi(condition_mean)
+```
+
+Intervals with densities
+To see the density along with the intervals, we can use geom_eyeh (horizontal “eye plots”, which combine intervals with violin plots), or geom_halfeyeh (horizontal interval + density plots):
+```{R}
+Mtest_stanlmer%>%
+  spread_draws(`(Intercept)`, b[,group]) %>%
+  mutate(condition_mean = `(Intercept)` + b) %>%
+  ggplot(aes(y = group, x = condition_mean)) +
+  geom_halfeyeh() 
+```
+
+Displaying posterior densities
+```{r}
+library(tidybayes)
+Mtest_stanlmer%>%
+  spread_draws(condition_mean[commname]) %>%
+  ggplot(aes(y = fct_rev(commname), x = condition_mean)) +
+  geom_violinh(color = NA, fill = "gray65") +
+  stat_pointintervalh(.width = c(.95, .66))
+
+```
+
+
+
+
+
+
+
+
+Posterior predictions
+Note, dataframes are not supported below
+```{r}
+library(dplyr)
+ABC <- dplyr::select(hh_data2, commname, an_gal_total)
+#converting to tibble
+library(tibble)
+ABC <- as_tibble(ABC)
+
+ABC %>%
+  ggplot(aes(y = commname, x = an_gal_total)) +
+  geom_point()
+
+ABC %>%
+  data_grid(commname) %>%
+  add_predicted_draws(hh_data2, Mtest_stanlmer)%>%
+  ggplot(aes(y = commname, x = .prediction)) +
+  stat_intervalh() +
+  geom_point(aes(x = an_gal_total), data = ABC) +
+  scale_color_brewer()
+
+ABC %>%
+  data_grid(commname) %>%
+  add_predicted_draws(hh_data2, Mtest_stanlmer) %>%
+  ggplot(aes(x = .prediction, y = commname)) +
+  geom_density_ridges()
+
+```
+
+```{r}
+grid <- ABC %>%
+  data_grid(commname)
+
+fits <- grid %>%
+  add_fitted_draws(Mtest_stanlmer, re_formula = NA)
+
+preds = grid %>%
+  add_predicted_draws(Mtest_stanlmer,re_formula = NA )
+
+ABC %>%
+  ggplot(aes(y = commname, x = an_gal_total)) +
+  stat_intervalh(aes(x = .prediction), data = preds) +
+  stat_pointintervalh(aes(x = .value), data = fits, .width = c(.66, .95), position = position_nudge(y = -0.2)) +
+  geom_point() +
+  scale_color_brewer()
+
+
+```
+
+
 
 
 # Complete-pooling regression
@@ -306,31 +712,6 @@ ggplot(data = df,
        x = "number of vehicles operated", 
        y = "Annual consumption of gasoline in gal")+theme_bw( base_family = "serif")
 ```
-
-
-
-
-
-
-##Bayesian approach
-https://mc-stan.org/users/documentation/case-studies/tutorial_rstanarm.html#model-3-varying-intercept-and-slope-model-with-a-single-predictor
-
-```{r}
-library(rstanarm)
-M3_stanlmer <- stan_lmer(formula = an_gal_total ~ 1 + sum_edible_wei_lbs + (1 + sum_edible_wei_lbs | commname), data = hh_data2, seed = 349)
-
-prior_summary(object = M3_stanlmer)
-```
-
-```{r}
-M3_stanlmer
-```
-
-
-
-
-
-
 
 
 
