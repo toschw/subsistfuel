@@ -1,0 +1,142 @@
+---
+title: "Subsistence fuel analysis"
+author: "Tobias Schwoerer"
+date: "June 5 2019"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+#Importing, preparing, and checking data
+##What probability distribution best fits the data?
+Answering this question is important for justifying the estimation approach. 
+For a nice guide on mixed models and how to build them, see https://ase.tufts.edu/gsc/gradresources/guidetomixedmodelsinr/mixed%20model%20guide.html
+```{r}
+library(dplyr)
+library(MASS)
+library(car)
+#data <- read.csv("C:/Users/Toby/Dropbox/DATA/Dropbox/DATA/2011_Schwoerer_subsistence_fuel_survey/Subset4R.csv",stringsAsFactor=FALSE)
+data <- read.csv("D:/Dropbox/DATA/2011_Schwoerer_subsistence_fuel_survey/Subset4R.csv",stringsAsFactor=FALSE)
+#eliminating missing data and equipment not used
+data2 <- subset(data, !is.na(an_gal))
+data2 <- subset(data2, used=="Used this equipment")
+
+#eliminating Chainsaws and generators
+data2 <- data2%>%
+  filter(resname!="Chainsaw" &resname!="Generator")
+
+#grouping data: each row is one household 
+hh_data <- data2%>%
+  group_by(ID)%>%
+  mutate(an_gal_total=sum(an_gal),
+         usenum_total=sum(usenum))%>%
+  subset(!is.na(price), select=-c(an_gal, survey_id, UniqueID, resname, fuel, saw, sm, atv, car, boat, vehicles))%>%
+  distinct()
+
+#eliminating NAs for edible weight variable
+hh_data2 <- subset(hh_data, !is.na(sum_edible_wei_lbs))
+#eliminating records that are below 1gal in gasoline consumption. 
+hh_data2 <- subset(hh_data2, an_gal_total>1)
+
+#Creating a community ID
+hh_data2$commID <- with(hh_data2, ifelse(commname=="Alatna",1,ifelse(commname=="Allakaket",2,ifelse(commname=="Anaktuvuk Pass",3,ifelse(commname=="Beaver",4,ifelse(commname=="Bettles",5,ifelse(commname=="Dot Lake",6,ifelse(commname=="Dry Creek",7,ifelse(commname=="Evansville",8,ifelse(commname=="Healy Lake",9,ifelse(commname=="Tok",10,11)))))))))))
+hh_data2$commID <- as.factor(hh_data2$commID)
+hh_data2$ID <- as.factor(hh_data2$ID)
+
+#eliminating outliers consuming more than 5000 gallons, found these through looking at distributions for an_gal variable
+hh_data2 <- subset(hh_data2,an_gal_total <5000)
+
+#correlation among variables
+library(PerformanceAnalytics)
+my_data <- hh_data2[, c("an_gal_total","sum_edible_wei_lbs", "sum_mean_dist_M","usenum","FishSumEdible","LargeGameSumEdible")]
+chart.Correlation(my_data, histogram=TRUE, pch=19)
+
+#checking normal fit of the gasoline consumption variable, important for selecting models later
+#Checking normal distribution fit
+qqp(hh_data2$an_gal_total, "norm")
+qqp(hh_data2$an_gal_total, "lnorm")
+
+#gamma distribution fit
+gamma <- fitdistr(hh_data2$an_gal_total, "gamma")
+qqp(hh_data2$an_gal_total, "gamma", shape = gamma$estimate[[1]], rate = gamma$estimate[[2]])
+
+#exponential distribution fit
+qqplot(x=qexp(ppoints(100)), y=gal_hh$an_gal, main="Exponential Q-Q Plot",
+       xlab="Theoretical Quantiles", ylab= "Your Data Quantiles")
+qqline(gal_hh$an_gal, distribution=qexp)
+
+#calculating sampel size per community
+samples <- hh_data2%>%
+  group_by(commname, river)%>%
+  summarise(n = n_distinct(ID))
+```
+Correlation results:
+an_gal_total ~ sum_edible_wei_lbs 0.21
+an_gal_total ~ sum_mean_dist_M 0.038
+
+Distribution fitting result: 
+The data is log-normally distributed. The guide (link above) says not to transform when fitting a mixed model. Data is NOT normally distributed so we cannot use the lme4 package for estimation using the lmer function. See examples for those here: https://mc-stan.org/users/documentation/case-studies/tutorial_rstanarm.html#model-3-varying-intercept-and-slope-model-with-a-single-predictor
+
+"First, we need to test whether we can use penalized quasilikelihood (PQL) or not. PQL is a flexible technique that can deal with non-normal data, unbalanced design, and crossed random effects. However, it produces biased estimates if your response variable fits a discrete count distribution, like Poisson or binomial, and the mean is less than 5 - or if your response variable is binary."  
+
+
+#Econometric models
+##Linear model
+Following https://mc-stan.org/users/documentation/case-studies/tutorial_rstanarm.html#model-3-varying-intercept-and-slope-model-with-a-single-predictor
+```{r}
+library(lme4)
+Mlinear <- lmer(formula = an_gal_total ~ 1 + FishSumEdible +LargeGameSumEdible + usenum_total   + comm_fuel_price + (1 | commname), data = hh_data2, REML = FALSE)
+summary(Mlinear)
+isSingular(Mlinear, tol = 1e-05)
+MlinearIntercepts <- ranef(Mlinear)$commname
+```
+Best model to fit, AIC 2035, no fuel price, random intercept model
+
+
+##Bayesian inference
+### Priors
+The data (population of households' gasoline consumption) is log-normally distributed. 
+If the sampling distribution for x is lognormal(μ, τ) with τ known, and the prior distribution on μ is normal(μ0, τ0), the posterior distribution on μ is normal((μ0 τ0 + τ Πxi)/(τ0 + nτ), τ0 + nτ).
+
+If the sampling distribution for x is lognormal(μ, τ) with μ known, and the prior distribution on τ is gamma(α, β), the posterior distribution on τ is gamma(α + n/2, (n-1)S2) where S2 is the sample variance.
+```{r}
+library(rstanarm)
+Mbayes <- stan_lmer(formula = an_gal_total ~ 1 + FishSumEdible +LargeGameSumEdible + usenum_total   + comm_fuel_price + (1 | commname), data = hh_data2, seed = 349)
+
+prior_summary(object = Mbayes)
+Mbayes
+summary(Mbayes)
+
+#Evaluating model convergence and diagnose model
+plot(Mbayes, "rhat")
+plot(Mbayes, "ess")
+launch_shinystan(Mbayes)
+```
+
+
+##Penalized Quasi-Likelihood - PQL - fitting a GLMM model with multivariate log-normal random effects.
+Test whether we can use penalized quasilikelihood (PQL) or not. PQL is a flexible technique that can deal with non-normal data, unbalanced design, and crossed random effects. However, it produces biased estimates if your response variable fits a discrete count distribution, like Poisson or binomial, and the mean is less than 5 - or if your response variable is binary. None of this is the case with our data, justifying the use of PQL.  
+
+Notes:
+Make absolutely sure that any an_gal_total < 1 is eleliminated from the data, otherwise the following code will not run. This was done in data preparation above. Also, the function's option: random=~1|commname is added to the model to indicate that commname is the random term. The 1 indicates that an intercept is to be fitted for each level of the random variable. Source: https://rcompanion.org/handbook/G_03.html.. The gaussian(link="log") indicates the log-normal distributed data. 
+Critique on PQL:
+PQL is mentioned as not being reliable https://bbolker.github.io/mixedmodels-misc/glmmFAQ.html
+```{r}
+library(MASS)
+PQL <- glmmPQL(an_gal_total ~ sum_edible_wei_lbs, random = ~ 1 | commname, family = gaussian(link = "log"), data = hh_data2, verbose = FALSE)
+summary(PQL)
+
+PQL2 <- glmmPQL(an_gal_total ~ FishSumEdible +LargeGameSumEdible + usenum_total, random = ~ 1 | commname, family = gaussian(link = "log"),    data = hh_data2, verbose = FALSE)
+summary(PQL2)
+gal_pred <- predict(PQL2)
+
+gal_obs <- hh_data2%>%
+  dplyr::select(an_gal_total, FishSumEdible, LargeGameSumEdible, usenum_total,commname)%>%
+  na.omit()%>%
+  dplyr::select(-c(FishSumEdible, LargeGameSumEdible, usenum_total,commname))
+
+tbl <- data.frame(cbind(gal_obs$an_gal_total,gal_pred))
+library(data.table)
+tbl <- setnames(tbl, old=c("V1"), new=c("gal_obs"))
+```
+The predictions turn out to be totally off by several magnitudes. 
