@@ -29,9 +29,13 @@ data2 <- data2%>%
 hh_data <- data2%>%
   group_by(ID)%>%
   mutate(an_gal_total=sum(an_gal),
-         usenum_total=sum(usenum))%>%
-  subset(!is.na(price), select=-c(an_gal, survey_id, UniqueID, resname, fuel, saw, sm, atv, car, boat, vehicles))%>%
-  distinct()
+         usenum_total=sum(usenum),
+         sms = sum(sm),
+         atvs = sum(atv),
+         cars =sum(car),
+         boats = sum(boat))%>%
+  subset(!is.na(price), select=-c(an_gal, survey_id, UniqueID, resname, fuel, saw, sm, atv, car, boat, vehicles, usenum))%>%
+  distinct(ID, .keep_all = TRUE)
 
 #eliminating NAs for edible weight variable
 hh_data2 <- subset(hh_data, !is.na(sum_edible_wei_lbs))
@@ -42,13 +46,34 @@ hh_data2 <- subset(hh_data2, an_gal_total>1)
 hh_data2$commID <- with(hh_data2, ifelse(commname=="Alatna",1,ifelse(commname=="Allakaket",2,ifelse(commname=="Anaktuvuk Pass",3,ifelse(commname=="Beaver",4,ifelse(commname=="Bettles",5,ifelse(commname=="Dot Lake",6,ifelse(commname=="Dry Creek",7,ifelse(commname=="Evansville",8,ifelse(commname=="Healy Lake",9,ifelse(commname=="Tok",10,11)))))))))))
 hh_data2$commID <- as.factor(hh_data2$commID)
 hh_data2$ID <- as.factor(hh_data2$ID)
+```
 
 #eliminating outliers consuming more than 5000 gallons, found these through looking at distributions for an_gal variable
+```{r}
 hh_data2 <- subset(hh_data2,an_gal_total <5000)
 
+#rescaling weight data
+hh_data2 <- hh_data2%>%
+  mutate(FishSumEdible1000 = FishSumEdible/1000,
+            LargeGameSumEdible1000 = LargeGameSumEdible/1000)
+# eliminating further outliers, edible weight exceeding 8000 lbs, also eliminate any duplicates
+hh_data3 <- hh_data2%>%
+  subset(sum_edible_wei_lbs<8000)
+
+#Scatterplot figures
+library(ggplot2)
+p <- ggplot(hh_data3, aes(x=sum_edible_wei_lbs,y=an_gal_total)) + facet_wrap(~commname,ncol = 3, scales = "fixed") + geom_point() +stat_smooth(method="lm")
+p
+
+#eliminating Evansville and Dot Lake
+hh_data4 <- hh_data3%>%
+    filter(commname!="Evansville" & commname!="Dot Lake")
+```
+
 #correlation among variables
+```{r}
 library(PerformanceAnalytics)
-my_data <- hh_data2[, c("an_gal_total","sum_edible_wei_lbs", "sum_mean_dist_M","usenum","FishSumEdible","LargeGameSumEdible")]
+my_data <- hh_data2[, c("an_gal_total","sum_edible_wei_lbs", "sum_mean_dist_M","usenum_total","FishSumEdible","LargeGameSumEdible")]
 chart.Correlation(my_data, histogram=TRUE, pch=19)
 
 #checking normal fit of the gasoline consumption variable, important for selecting models later
@@ -67,9 +92,11 @@ qqline(gal_hh$an_gal, distribution=qexp)
 
 #calculating sampel size per community
 samples <- hh_data2%>%
-  group_by(commname, river)%>%
+  group_by(commname, road)%>%
   summarise(n = n_distinct(ID))
+           
 ```
+
 Correlation results:
 an_gal_total ~ sum_edible_wei_lbs 0.21
 an_gal_total ~ sum_mean_dist_M 0.038
@@ -79,13 +106,84 @@ The data is log-normally distributed. The guide (link above) says not to transfo
 
 "First, we need to test whether we can use penalized quasilikelihood (PQL) or not. PQL is a flexible technique that can deal with non-normal data, unbalanced design, and crossed random effects. However, it produces biased estimates if your response variable fits a discrete count distribution, like Poisson or binomial, and the mean is less than 5 - or if your response variable is binary."  
 
+#Dealing with our right skewed data
+Data such as the gasoline consumption variable are often naturally log-normally distributed:  values are often low, but are occasionally high or very high. Source: https://rcompanion.org/handbook/I_12.html
+This post in rstanarm suggests to transform the outcome variable: https://github.com/stan-dev/rstanarm/issues/115
+```{r}
+#log-transforming an_gal_total
+hh_data3$gal_log <- log(hh_data3$an_gal_total)
+#Checking normal distribution fit
+qqp(hh_data3$gal_log, "norm")
+```
 
 #Econometric models
+##Bayesian Generalized Linear Models With Group-Specific Terms Via Stan
+Fitting a lognormal data model using the log-transformed outcome variable as suggested here:
+https://github.com/stan-dev/rstanarm/issues/115
+Took out OtherSumEdible, SmallGameSumEdible, VegetationSumEdible, and LargeGameSumDist as these are all zero coefficients not adding much explanatory,power to the model as expected. 
+```{r}
+#eliminating variables we don't need
+mdata <- hh_data3%>%
+  select(c(an_gal_total, gal_log, FishSumEdible1000, LargeGameSumEdible1000, usenum_total, atvs, sms, boats, cars, comm_fuel_price, commname))%>%
+  na.omit()
+
+
+
+
+library(rstanarm)
+Mglm <- stan_glmer(gal_log ~ 1 + FishSumEdible1000 +  LargeGameSumEdible1000  + usenum_total + atvs + sms + boats + cars +   (1 + comm_fuel_price | commname), data = mdata, family = gaussian(link = "identity"))
+
+prior_summary(object = Mglm)
+Mglm
+summary(Mglm)
+
+#Evaluating model convergence and diagnose model
+plot(Mglm, "rhat")
+plot(Mglm, "ess")
+launch_shinystan(Mglm)
+```
+
+#Posterior predictions
+```{r}
+library(tidybayes)
+library(dplyr)
+mdata2 <- mdata%>%
+  add_predicted_draws(Mglm, fun = exp, n = 100, seed = 123, re_formula = NULL, category = ".category")
+mdata3 <- mdata2%>%
+  subset(select=-c(.chain, .iteration))%>%
+  group_by(ID)%>%
+  summarise(draws_mean = mean(.prediction),
+            draws_2.5 = quantile(.prediction, .025),
+            draws_97.5 = quantile(.prediction, 0.975),
+            an_gal_total = mean(an_gal_total))
+#adding community name back in
+mdata3$commname <- gsub( "_.*$", "", mdata3$ID )
+
+
+#Scatterplot figures, showing mean prediction versus data for each community
+library(ggplot2)
+predplot <- ggplot(mdata3, aes(x=draws_mean,y=an_gal_total)) + facet_wrap(~commname,ncol = 3, scales = "fixed") + 
+  geom_point() +
+  geom_abline(intercept = 0, slope = 1)
+predplot
+
+#plotting predictive bands alongside the data, and posterior distributions of the means:
+
+pred_bands <- ggplot(mdata2, aes(y = commname, x = .prediction)) +
+  stat_intervalh() +
+  geom_point(aes(x = an_gal_total), data = mdata2) +
+  scale_color_brewer()+
+  ylab("community") +xlab("predicted gal/year per household") + xlim(0,10000)
+pred_bands
+```
+
+
+
 ##Linear model
 Following https://mc-stan.org/users/documentation/case-studies/tutorial_rstanarm.html#model-3-varying-intercept-and-slope-model-with-a-single-predictor
 ```{r}
 library(lme4)
-Mlinear <- lmer(formula = an_gal_total ~ 1 + FishSumEdible +LargeGameSumEdible + usenum_total   + comm_fuel_price + (1 | commname), data = hh_data2, REML = FALSE)
+Mlinear <- lmer(formula = an_gal_total ~ 1 + FishSumEdible + LargeGameSumEdible + usenum_total + comm_fuel_price + (1 | commname), data = hh_data2, REML = FALSE)
 summary(Mlinear)
 isSingular(Mlinear, tol = 1e-05)
 MlinearIntercepts <- ranef(Mlinear)$commname
@@ -99,9 +197,10 @@ The data (population of households' gasoline consumption) is log-normally distri
 If the sampling distribution for x is lognormal(μ, τ) with τ known, and the prior distribution on μ is normal(μ0, τ0), the posterior distribution on μ is normal((μ0 τ0 + τ Πxi)/(τ0 + nτ), τ0 + nτ).
 
 If the sampling distribution for x is lognormal(μ, τ) with μ known, and the prior distribution on τ is gamma(α, β), the posterior distribution on τ is gamma(α + n/2, (n-1)S2) where S2 is the sample variance.
+
 ```{r}
 library(rstanarm)
-Mbayes <- stan_lmer(formula = an_gal_total ~ 1 + FishSumEdible +LargeGameSumEdible + usenum_total   + comm_fuel_price + (1 | commname), data = hh_data2, seed = 349)
+Mbayes <- stan_lmer(formula = an_gal_total ~ 1 + FishSumEdible1000 + OtherSumEdible + SmallGameSumEdible + VegetationSumEdible + LargeGameSumEdible1000  + usenum_total + atvs + sms + boats + cars + (1 +  comm_fuel_price| commname), data = hh_data3, seed = 349)
 
 prior_summary(object = Mbayes)
 Mbayes
@@ -112,6 +211,30 @@ plot(Mbayes, "rhat")
 plot(Mbayes, "ess")
 launch_shinystan(Mbayes)
 ```
+
+
+Default model
+```{r}
+library(rstanarm)
+Mbayes <- stan_lmer(formula = an_gal_total ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000 +  comm_fuel_price + usenum_total + (1 | commname), data = hh_data3, seed = 349)
+
+prior_summary(object = Mbayes)
+Mbayes
+summary(Mbayes)
+
+#Evaluating model convergence and diagnose model
+plot(Mbayes, "rhat")
+plot(Mbayes, "ess")
+launch_shinystan(Mbayes)
+```
+
+
+
+
+
+
+
+
 
 
 ##Penalized Quasi-Likelihood - PQL - fitting a GLMM model with multivariate log-normal random effects.
