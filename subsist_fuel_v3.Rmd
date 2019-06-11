@@ -77,8 +77,9 @@ Fitting a lognormal data model using the log-transformed outcome variable, gal_l
 Variables that ended up close to zero and not adding any predictive power were: OtherSumEdible, SmallGameSumEdible, VegetationSumEdible, and LargeGameSumDist. 
 ```{r}
 #eliminating variables we don't need and that contain NAs
-modelData <- hh_data3%>%
-  select(c(an_gal_total, gal_log, FishSumEdible1000, LargeGameSumEdible1000, usenum_total, atvs, sms, boats, cars, comm_fuel_price, commname))%>%
+keep <- c("an_gal_total", "gal_log", "FishSumEdible1000", "LargeGameSumEdible1000", "usenum_total", "atvs", "sms", "boats", "cars", "comm_fuel_price", "commname")
+modelData <- hh_data3[keep]
+modelData <- modelData%>%
   na.omit()
 
 #model
