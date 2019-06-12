@@ -75,14 +75,37 @@ qqp(hh_data3$gal_log, "norm")
 ##Bayesian Generalized Linear Models With Group-Specific Terms Via Stan
 Fitting a lognormal data model using the log-transformed outcome variable, gal_log. 
 Variables that ended up close to zero and not adding any predictive power were: OtherSumEdible, SmallGameSumEdible, VegetationSumEdible, and LargeGameSumDist. 
+###Preparing data for model
 ```{r}
 #eliminating variables we don't need and that contain NAs
 keep <- c("an_gal_total", "gal_log", "FishSumEdible1000", "LargeGameSumEdible1000", "usenum_total", "atvs", "sms", "boats", "cars", "comm_fuel_price", "commname")
 modelData <- hh_data3[keep]
 modelData <- modelData%>%
   na.omit()
+```
 
-#model
+###Testing for homogeneity between communities, which exists if the p-value of the test is less than the significance level of 0.05. 
+In order to get valid parameter estimates, we need more or less a homogeneous response variable across groups (communities). See: Gabry and Goodrich 2018: https://cran.r-project.org/web/packages/rstanarm/vignettes/glmer.html  "An analysis that disregards between-group heterogeneity can yield parameter estimates that are wrong if there is between-group heterogeneity but would be relatively precise if there actually were no between-group heterogeneity."
+
+Since the log-transformed data is not exactly normally distributed, we use the Levene test as a more robust alternative to test for the above. 
+
+H0: the group variances are equal (called homogeneity of variance or homoscedasticity)
+If the resulting p-value of Levene's test is less than some significance level (typically 0.05), the obtained differences in sample variances are unlikely to have occurred based on random sampling from a population with equal variances. Thus, the null hypothesis of equal variances is rejected and it is concluded that there is a difference between the variances in the population. In other words, there is heteroscedasticity. 
+```{r}
+library(car)
+#Bartlett's test 
+bartlett.test(gal_log ~ commname, data = modelData)
+# Levene's test with one independent variable. The Levene test, is a more robust alternative to the Bartlett test when the distributions of the data are non-normal.
+leveneTest(gal_log ~ commname, data = modelData)
+```
+Result:
+In both tests, the H0 is rejected, heterogeneous variances exists between communities. Concluding our estimators are biased. 
+
+Bayesian estimation can help in this case:
+"Group-by-group analyses, on the other hand, are valid but produces estimates that are relatively imprecise. While complete pooling or no pooling of data across groups is sometimes called for, models that ignore the grouping structures in the data tend to underfit or overfit (Gelman et al.,2013). Hierarchical modeling provides a compromise by allowing parameters to vary by group at lower levels of the hierarchy while estimating common parameters at higher levels. Inference for each group-level parameter is informed not only by the group-specific information contained in the data but also by the data for other groups as well. This is commonly referred to as borrowing strength or shrinkage." (Gabry and Goodrich 2018)
+
+###model
+```{r}
 Mglm <- stan_glmer(gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   + atvs + sms + boats + cars +   (1 + comm_fuel_price | commname), data = modelData, family = gaussian(link = "identity"))
 
 #model summary output
@@ -126,6 +149,21 @@ pred_bands <- ggplot(mdata2, aes(y = commname, x = .prediction)) +
   ylab("community") +xlab("predicted gal/year per household") + xlim(0,10000)
 pred_bands
 ```
+
+
+##Linear model
+Following https://mc-stan.org/users/documentation/case-studies/tutorial_rstanarm.html#model-3-varying-intercept-and-slope-model-with-a-single-predictor
+```{r}
+library(lme4)
+Mlinear <- lmer(formula = gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   + atvs + sms + boats + cars +   (1 + comm_fuel_price | commname), data = modelData, REML = FALSE)
+summary(Mlinear)
+isSingular(Mlinear, tol = 1e-05)
+MlinearIntercepts <- ranef(Mlinear)$commname
+```
+Result:
+boundary (singular) fit, see isSinglular, the test for singularity is positive
+
+
 
 #calculating sampel size per community
 ```{r}
