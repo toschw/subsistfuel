@@ -164,7 +164,7 @@ pred_bands
 Following https://mc-stan.org/users/documentation/case-studies/tutorial_rstanarm.html#model-3-varying-intercept-and-slope-model-with-a-single-predictor
 ```{r}
 library(lme4)
-Mlinear <- lmer(formula = gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   + atvs + sms + boats + cars +   (1 + comm_fuel_price | commname), data = modelData, REML = FALSE)
+Mlinear <- lmer(formula = gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   + atvs + sms + boats + cars +   (1 + gasolinePrice | commname), data = modelData, REML = FALSE)
 summary(Mlinear)
 isSingular(Mlinear, tol = 1e-05)
 MlinearIntercepts <- ranef(Mlinear)$commname
