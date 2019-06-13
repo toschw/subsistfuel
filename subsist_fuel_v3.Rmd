@@ -181,7 +181,7 @@ samples <- data%>%
   summarise(n = n_distinct(ID))
 modeled <- modelData%>%
   group_by(commname)%>%
-  summarise(n = n_distinct(ID))
+  count()
 samples <- samples%>%
   left_join(modeled,by="commname")
 ```
