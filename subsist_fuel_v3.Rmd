@@ -60,6 +60,15 @@ hh_data3 <- hh_data3%>%
   mutate(FishSumEdible1000 = FishSumEdible/1000,
          LargeGameSumEdible1000 = LargeGameSumEdible/1000)
 ```
+#eliminating old price columns, adding new column with updated gasoline prices
+Source: 
+Department of Commerce Community and Economic Development Division of Community and Regional Affairs Research and Analysis
+https://www.commerce.alaska.gov/web/Portals/4/pub/FuelWatch_2011_June.pdf
+```{r}
+gasoline <- read.csv("D:/Dropbox/DATA/2011_Schwoerer_subsistence_fuel_survey/gasoline_prices.csv",stringsAsFactor=FALSE)
+hh_data3 <- hh_data3%>%
+  left_join(gasoline, by="commname")
+```
 Result: 
 an_gal_total (annual gasoline consumption in gallons per household) is log-normally distributed, need to transform (https://github.com/stan-dev/rstanarm/issues/115). Data such as the gasoline consumption are often naturally log-normally distributed:  values are often low, but are occasionally high or very high (https://rcompanion.org/handbook/I_12.html)
 
@@ -77,8 +86,8 @@ Fitting a lognormal data model using the log-transformed outcome variable, gal_l
 Variables that ended up close to zero and not adding any predictive power were: OtherSumEdible, SmallGameSumEdible, VegetationSumEdible, and LargeGameSumDist. 
 ###Preparing data for model
 ```{r}
-#eliminating variables we don't need and that contain NAs
-keep <- c("an_gal_total", "gal_log", "FishSumEdible1000", "LargeGameSumEdible1000", "usenum_total", "atvs", "sms", "boats", "cars", "comm_fuel_price", "commname")
+#dropping other price columns and eliminating variables we don't need
+keep <- c("an_gal_total", "gal_log", "FishSumEdible1000", "LargeGameSumEdible1000", "usenum_total", "atvs", "sms", "boats", "cars", "gasolinePrice", "commname")
 modelData <- hh_data3[keep]
 modelData <- modelData%>%
   na.omit()
@@ -106,7 +115,7 @@ Bayesian estimation can help in this case:
 
 ###model
 ```{r}
-Mglm <- stan_glmer(gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   + atvs + sms + boats + cars +   (1 + comm_fuel_price | commname), data = modelData, family = gaussian(link = "identity"))
+Mglm <- stan_glmer(gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   + atvs + sms + boats + cars +   (1 + gasolinePrice | commname), data = modelData, family = gaussian(link = "identity"))
 
 #model summary output
 prior_summary(object = Mglm)
