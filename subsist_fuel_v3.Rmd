@@ -184,4 +184,14 @@ modeled <- modelData%>%
   count()
 samples <- samples%>%
   left_join(modeled,by="commname")
+
+#community characteristics, median edible lbs by species
+harvestmedian <- modelData%>%
+  group_by(commname)%>%
+    summarise(fish = median(FishSumEdible1000)*1000,
+            game = median(LargeGameSumEdible1000)*1000,
+            atv = mean(atvs),
+            sm = mean(sms),
+            boat = mean(boats),
+            car = mean(cars))
 ```
