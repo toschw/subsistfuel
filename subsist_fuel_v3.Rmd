@@ -106,6 +106,8 @@ library(car)
 bartlett.test(gal_log ~ commname, data = modelData)
 # Levene's test with one independent variable. The Levene test, is a more robust alternative to the Bartlett test when the distributions of the data are non-normal.
 leveneTest(gal_log ~ commname, data = modelData)
+
+fligner.test(gal_log ~ commname, data = modelData)
 ```
 Result:
 In both tests, the H0 is rejected, heterogeneous variances exists between communities. Concluding our estimators are biased. 
