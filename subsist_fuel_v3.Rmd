@@ -165,14 +165,14 @@ price_posterior_fig <- mcmc_areas(posterior, pars = c("b[gasolinePrice commname:
   ggplot2::xlab("Posterior coefficient estimate: gasoline price")+
   ggplot2::ylab("Density")+
   ggplot2::geom_line(size=0.01) +
-  ggplot2::geom_segment(aes(x = 0.8, y = 7, xend = 0.8, yend = 8),arrow = arrow(length = unit(0.3, "cm"))) +
-  ggplot2::annotate("text", x = 0.82, y = 6.5, label = "higher Ak Native %",size=1.5) +
-  ggplot2::geom_segment(aes(x = 0.8, y = 4, xend = 0.8, yend = 3),arrow = arrow(length = unit(0.3, "cm")))+
-  ggplot2::annotate("text", x = 0.82, y = 4.5, label = "lower Ak Native %",size=1.5) +
+  #ggplot2::geom_segment(aes(x = 0.8, y = 7, xend = 0.8, yend = 8),arrow = arrow(length = unit(0.3, "cm"))) +
+  #ggplot2::annotate("text", x = 0.82, y = 6.5, label = "higher Ak Native %",size=1.5) +
+  #ggplot2::geom_segment(aes(x = 0.8, y = 4, xend = 0.8, yend = 3),arrow = arrow(length = unit(0.3, "cm")))+
+  #ggplot2::annotate("text", x = 0.82, y = 4.5, label = "lower Ak Native %",size=1.5) +
  ggplot2::theme_update(text = element_text(size=7))  # sets text size to points, 7pts required by Elsevier
 price_posterior_fig
 ggsave("price_posterior_fig.bmp", plot = last_plot(), device = "bmp", path = NULL,
-  scale = 1, width = 90, height = 60, units = "mm",
+  scale = 1, width = 140, height = 90, units = "mm",
   dpi = 300, limitsize = TRUE)
 
 #convergence check after warm-up
@@ -220,11 +220,35 @@ Mlinear <- lmer(formula = gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible10
 summary(Mlinear)
 isSingular(Mlinear, tol = 1e-05)
 MlinearIntercepts <- ranef(Mlinear)$commname
-
+linearPredict <- as.data.frame(predict(Mlinear))
+colnames(linearPredict)[1] <- "linearPredict"
 ```
+
 Result:
 not singular
 
+###Comparing PPC with linear model predictions
+```{r}
+library(gginnards)
+library(stringr)
+draws <- as.data.frame(t(posterior_predict(Mglm, draws = 50)))
+comPredict <- cbind(Mglm$y,draws,linearPredict)
+
+library(reshape2)
+data<- melt(comPredict)
+data$type <- with(data, ifelse(str_detect(data$variable,"V"),"y HB",ifelse(variable=="Mglm$y","y","y ML")))
+
+PPC <- ggplot(data,aes(x=value, line=variable, color=type)) + 
+  geom_line(alpha=0.5, stat="density", show.legend=TRUE, size=0.3) +
+  scale_color_manual(name = "", values=c("y"="blue", "y HB"=  "grey","y ML"=  "red"))+
+  theme(legend.position = c(0.7, 0.9),legend.justification = c(0, 1),legend.text=element_text(size=7),text = element_text(size=7) )+
+  ylab("Density")+
+  xlab("Log(annual gasoline consumption)")
+PPC
+ggsave("PPC_fig.bmp", plot = last_plot(), device = "bmp", path = NULL,
+  scale = 1, width = 90, height = 90, units = "mm",
+  dpi = 300, limitsize = TRUE)
+```
 
 
 #calculating sampel size per community
