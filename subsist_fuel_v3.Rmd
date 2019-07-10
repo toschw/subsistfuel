@@ -116,8 +116,9 @@ In both tests, the H0 is rejected, heterogeneous variances exists between commun
 Bayesian estimation can help in this case:
 "Group-by-group analyses, on the other hand, are valid but produces estimates that are relatively imprecise. While complete pooling or no pooling of data across groups is sometimes called for, models that ignore the grouping structures in the data tend to underfit or overfit (Gelman et al.,2013). Hierarchical modeling provides a compromise by allowing parameters to vary by group at lower levels of the hierarchy while estimating common parameters at higher levels. Inference for each group-level parameter is informed not only by the group-specific information contained in the data but also by the data for other groups as well. This is commonly referred to as borrowing strength or shrinkage." (Gabry and Goodrich 2018)
 
-###model
+###2 HB models
 ```{r}
+#Model 1
 Mglm <- stan_glmer(gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   + atvs + sms + boats + cars +   (1 + gasolinePrice | commname), data = modelData, family = gaussian(link = "identity"))
 
 #model summary output
@@ -129,6 +130,12 @@ summary(Mglm)
 plot(Mglm, "rhat")
 plot(Mglm, "ess")
 launch_shinystan(Mglm)
+
+#Model2
+Mglm2 <- stan_glmer(gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   + atvs + sms + boats + cars +   (1 | commname), data = modelData, family = gaussian(link = "identity"))
+
+#Model3, an even simpler model
+Mglm3 <- stan_glmer(gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   +   (1 | commname), data = modelData, family = gaussian(link = "identity"))
 ```
 
 #Predictive checks
@@ -250,6 +257,28 @@ ggsave("PPC_fig.bmp", plot = last_plot(), device = "bmp", path = NULL,
   dpi = 300, limitsize = TRUE)
 ```
 
+###Comparing PPC of the simpler model with linear model predictions
+```{r}
+library(gginnards)
+library(stringr)
+draws <- as.data.frame(t(posterior_predict(Mglm2, draws = 50)))
+comPredict <- cbind(Mglm2$y,draws,linearPredict)
+
+library(reshape2)
+data<- melt(comPredict)
+data$type <- with(data, ifelse(str_detect(data$variable,"V"),"y HB",ifelse(variable=="Mglm2$y","y","y ML")))
+
+PPC <- ggplot(data,aes(x=value, line=variable, color=type)) + 
+  geom_line(alpha=0.5, stat="density", show.legend=TRUE, size=0.3) +
+  scale_color_manual(name = "", values=c("y"="blue", "y HB"=  "grey","y ML"=  "red"))+
+  theme(legend.position = c(0.7, 0.9),legend.justification = c(0, 1),legend.text=element_text(size=7),text = element_text(size=7) )+
+  ylab("Density")+
+  xlab("Log(annual gasoline consumption)")
+PPC
+ggsave("PPC_fig_model2.bmp", plot = last_plot(), device = "bmp", path = NULL,
+  scale = 1, width = 90, height = 90, units = "mm",
+  dpi = 300, limitsize = TRUE)
+```
 
 #calculating sampel size per community
 ```{r}
@@ -275,4 +304,39 @@ harvestmedian <- modelData%>%
             sm = mean(sms),
             boat = mean(boats),
             car = mean(cars))
+```
+
+#Validation 
+We used k=10-fold cross-validation to compare the two models above. 
+Following http://mc-stan.org/rstanarm/reference/loo.stanreg.html#k-fold-cv
+Results will be ordered by expected predictive accuracy. 
+```{r}
+kfoldHB1 <- kfold(Mglm, K=10)
+kfoldHB2 <- kfold(Mglm2, K=10)
+compare_models(kfoldHB1, kfoldHB2, detail=TRUE) #negative 'elpd_diff' favors 1st model, positive favors 2nd
+```
+Result:
+Model comparison: 
+(negative 'elpd_diff' favors 1st model, positive favors 2nd) 
+
+elpd_diff        se 
+      0.3       1.6 
+
+```{r}
+library(rstanarm)
+kfoldHB3 <- kfold(Mglm3, K=10)
+kfoldHB2 <- kfold(Mglm2, K=10)
+compare_models(kfoldHB3, kfoldHB2, detail=TRUE) #negative 'elpd_diff' favors 1st model, positive favors 2nd
+```
+
+using loo cv
+```{r}
+library(loo)
+loo1 <- loo(Mglm, cores = 2)
+print(loo1)
+
+loo2 <- loo(Mglm2, cores = 2)
+print(loo2)
+compare_models(loos = list(loo1, loo2))
+
 ```
