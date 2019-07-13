@@ -46,8 +46,8 @@ hh_data2 <- hh_data%>%
   subset( an_gal_total>1)
 
 #check whether outcome variable is normally or log-normally distributed
-qqp(hh_data2$an_gal_total, "norm")
-qqp(hh_data2$an_gal_total, "lnorm")
+car::qqPlot(hh_data2$an_gal_total)
+qqPlot(hh_data2$an_gal_total, "lnorm")
 
 #eliminating extreme outliers based on distribution fit plot, eliminated households using more than 5000 gallons and harvesting more than 8000lbs.
 hh_data3 <- hh_data2%>%
@@ -92,6 +92,8 @@ keep <- c("an_gal_total", "gal_log", "FishSumEdible1000", "LargeGameSumEdible100
 modelData <- hh_data3[keep]
 modelData <- modelData%>%
   na.omit()
+
+
 ```
 
 ###Testing for homogeneity between communities, which exists if the p-value of the test is less than the significance level of 0.05. 
@@ -121,24 +123,28 @@ Bayesian estimation can help in this case:
 #Model 1
 Mglm <- stan_glmer(gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   + atvs + sms + boats + cars +   (1 + gasolinePrice | commname), data = modelData, family = gaussian(link = "identity"))
 
-#model summary output
-prior_summary(object = Mglm)
-Mglm
-summary(Mglm)
 
-#Evaluating model convergence and diagnose model through STAN online portal
-plot(Mglm, "rhat")
-plot(Mglm, "ess")
-launch_shinystan(Mglm)
+
 
 #Model2
 Mglm2 <- stan_glmer(gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   + atvs + sms + boats + cars +   (1 | commname), data = modelData, family = gaussian(link = "identity"))
+launch_shinystan(Mglm2)
 
-#Model3, an even simpler model
+#model summary output
+prior_summary(object = Mglm2)
+Mglm2
+summary(Mglm2)
+
+#Evaluating model convergence and diagnose model through STAN online portal
+plot(Mglm2, "rhat")
+plot(Mglm2, "ess")
+
+#Model3, an even simpler model without vehicle stock
 Mglm3 <- stan_glmer(gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   +   (1 | commname), data = modelData, family = gaussian(link = "identity"))
 ```
 
-#Predictive checks
+#Diagnostics for Model2
+##Predictive checks
 ```{r}
 library(bayesplot)
 library(rstan)
@@ -146,16 +152,61 @@ if (!require("devtools")) {
   install.packages("devtools")
 }
 devtools::install_github("stan-dev/bayesplot")
+
+#predictive checking
+theme_set(theme_cowplot(font_size=7))
+color_scheme_set("brightblue")
+Tmean <- Mglm2 %>%
+  posterior_predict(draws = 500) %>%
+  ppc_stat(y = Mglm2$y,
+             stat = "mean")
+Tsd <- Mglm2 %>%
+  posterior_predict(draws = 500) %>%
+  ppc_stat(y = Mglm2$y,
+             stat = "sd")
+Tmin <- Mglm2 %>%
+  posterior_predict(draws = 500) %>%
+  ppc_stat(y = Mglm2$y,
+             stat = "min")
+Tmax <- Mglm2 %>%
+  posterior_predict(draws = 500) %>%
+  ppc_stat(y = Mglm2$y,
+             stat = "max")
+#combining plots
+library(cowplot)
+theme_set(theme_cowplot(font_size=7))
+plot_grid(Tmean, Tsd, Tmin, Tmax, labels = c("A", "B", "C", "D"), ncol = 2)
+ggsave("yyrepGrid_fig.bmp", plot = last_plot(), device = "bmp", path = NULL,
+  scale = 1, width = 140, height = 140, units = "mm",
+  dpi = 300, limitsize = TRUE)
 ```
 
 
 #Results
+##Model checking
+```{r}
+#convergence check after warm-up
+color_scheme_set("mix-blue-red")
+con_test_fig <- mcmc_trace(Mglm, pars = c("FishSumEdible1000", "sigma"),
+           facet_args = list(nrow = 2)) +
+   ggplot2::theme_update(text = element_text(size=7))  
+con_test_fig
+ggsave("con_test_fig.bmp", plot = last_plot(), device = "bmp", path = NULL,
+  scale = 1, width = 90, height = 90, units = "mm",
+  dpi = 300, limitsize = TRUE)
+```
+
 ##Posterior distributions for estimators 
 ```{r}
-posterior <- as.matrix(Mglm)
+posterior <- as.matrix(Mglm2)
+
+modelData2 <- modelData%>%
+  add_predicted_draws(Mglm2, fun = exp, n = 100, seed = 123, re_formula = NULL, category = ".category")
+
+
 
 #main hh_level predictors
-hh_posterior_fig <- mcmc_areas(posterior, pars = c( "FishSumEdible1000", "LargeGameSumEdible1000", "sms","boats","atvs","cars","(Intercept)"),prob = 0.8) +   ggplot2::scale_y_discrete(labels = c( "Fish harvest 1000lbs", "Game harvest 1000lbs","Snowmobiles","Boats","ATVs", "Cars & trucks","Intercept")) + 
+hh_posterior_fig <- bayesplot::mcmc_areas(posterior, pars = c( "FishSumEdible1000", "LargeGameSumEdible1000", "sms","boats","atvs","cars","(Intercept)"),prob = 0.8) +   ggplot2::scale_y_discrete(labels = c( "Fish harvest 1000lbs", "Game harvest 1000lbs","Snowmobiles","Boats","ATVs", "Cars & trucks","Intercept")) + 
   ggplot2::xlab("Posterior coefficient estimate")+
   ggplot2::ylab("Density")+
   ggplot2::theme_update(text = element_text(size=7)) + # sets text size to points, 7pts required by Elsevier
@@ -165,7 +216,21 @@ ggsave("hh_posterior_fig.bmp", plot = last_plot(), device = "bmp", path = NULL,
   scale = 1, width = 90, height = 90, units = "mm",
   dpi = 300, limitsize = TRUE)
 
-#gasoline price predictor by community
+#plotting predictive bands alongside the data
+pred_bands <- ggplot(modelData2, aes(y = commname, x = .prediction)) +
+  stat_intervalh() +
+  geom_point(aes(x = an_gal_total), data = modelData) +
+  scale_color_brewer()+
+  ylab("")+
+  xlab("annual gasoline consumption (gal/household)") + xlim(0,8000) +
+  theme(legend.position = c(0.7, 0.9),legend.justification = c(0, 1),legend.text=element_text(size=7),text = element_text(size=7) )+
+  labs(color="Percentile of posterior \npredictive distribution")
+pred_bands
+ggsave("pred_bands_fig.bmp", plot = last_plot(), device = "bmp", path = NULL,
+  scale = 1, width = 140, height = 70, units = "mm",
+  dpi = 300, limitsize = TRUE)
+
+#gasoline price predictor by community, probably not needed as we are not interested in the coefficient estimates as much as overall prediction accuracy
 price_posterior_fig <- mcmc_areas(posterior, pars = c("b[gasolinePrice commname:Dry_Creek]","b[gasolinePrice commname:Bettles]","b[gasolinePrice commname:Tok]","b[gasolinePrice commname:Dot_Lake]","b[gasolinePrice commname:Evansville]","b[gasolinePrice commname:Anaktuvuk_Pass]","b[gasolinePrice commname:Wiseman]","b[gasolinePrice commname:Alatna]","b[gasolinePrice commname:Beaver]","b[gasolinePrice commname:Allakaket]"),prob = 0.8) +
   ggplot2::scale_y_discrete(labels = c( "Dry Creek","Bettles", "Tok","Dot Lake","Evansville","Anaktuvuk Pass", "Wiseman","Alatna","Beaver","Allakaket")) + 
   ggplot2::xlim(-1,+1) + 
@@ -180,41 +245,6 @@ price_posterior_fig <- mcmc_areas(posterior, pars = c("b[gasolinePrice commname:
 price_posterior_fig
 ggsave("price_posterior_fig.bmp", plot = last_plot(), device = "bmp", path = NULL,
   scale = 1, width = 140, height = 90, units = "mm",
-  dpi = 300, limitsize = TRUE)
-
-#convergence check after warm-up
-color_scheme_set("mix-blue-red")
-con_test_fig <- mcmc_trace(Mglm, pars = c("FishSumEdible1000", "sigma"),
-           facet_args = list(nrow = 2)) +
-   ggplot2::theme_update(text = element_text(size=7))  
-con_test_fig
-ggsave("con_test_fig.bmp", plot = last_plot(), device = "bmp", path = NULL,
-  scale = 1, width = 90, height = 90, units = "mm",
-  dpi = 300, limitsize = TRUE)
-
-#plotting predictive bands alongside the data
-pred_bands <- ggplot(mdata2, aes(y = commname, x = .prediction)) +
-  stat_intervalh() +
-  geom_point(aes(x = an_gal_total), data = mdata2) +
-  scale_color_brewer()+
-  ylab("")+
-  xlab("annual gasoline consumption (gal/household)") + xlim(0,8000) +
-  theme(legend.position = c(0.7, 0.9),legend.justification = c(0, 1),legend.text=element_text(size=7),text = element_text(size=7) )+
-  labs(color="Percentile of posterior \npredictive distribution")
-pred_bands
-ggsave("pred_bands_fig.bmp", plot = last_plot(), device = "bmp", path = NULL,
-  scale = 1, width = 140, height = 70, units = "mm",
-  dpi = 300, limitsize = TRUE)
-
-#Posterior predictive check PPC
-color_scheme_set("gray")
-PPC <- ppc_dens_overlay(y = Mglm$y, yrep = posterior_predict(Mglm, draws = 50))+
-  ggplot2::ylab("Density")+
-  ggplot2::xlab("Log(annual gasoline consumption)")
-PPC + theme_update(text = element_text(size=7))+
- theme(legend.position = c(0.7, 0.9),legend.justification = c(0, 1) )
-ggsave("PPC_fig.bmp", plot = last_plot(), device = "bmp", path = NULL,
-  scale = 1, width = 90, height = 90, units = "mm",
   dpi = 300, limitsize = TRUE)
 ```
 
@@ -238,12 +268,12 @@ not singular
 ```{r}
 library(gginnards)
 library(stringr)
-draws <- as.data.frame(t(posterior_predict(Mglm, draws = 50)))
-comPredict <- cbind(Mglm$y,draws,linearPredict)
+draws <- as.data.frame(t(posterior_predict(Mglm2, draws = 50)))
+comPredict <- cbind(Mglm2$y,draws,linearPredict)
 
 library(reshape2)
 data<- melt(comPredict)
-data$type <- with(data, ifelse(str_detect(data$variable,"V"),"y HB",ifelse(variable=="Mglm$y","y","y ML")))
+data$type <- with(data, ifelse(str_detect(data$variable,"V"),"y HB",ifelse(variable=="Mglm2$y","y","y ML")))
 
 PPC <- ggplot(data,aes(x=value, line=variable, color=type)) + 
   geom_line(alpha=0.5, stat="density", show.legend=TRUE, size=0.3) +
@@ -321,6 +351,8 @@ Model comparison:
 
 elpd_diff        se 
       0.3       1.6 
+      
+The simpler model without the community-specific price variable is better in predicting gasoline consumption.
 
 ```{r}
 library(rstanarm)
@@ -328,15 +360,12 @@ kfoldHB3 <- kfold(Mglm3, K=10)
 kfoldHB2 <- kfold(Mglm2, K=10)
 compare_models(kfoldHB3, kfoldHB2, detail=TRUE) #negative 'elpd_diff' favors 1st model, positive favors 2nd
 ```
+Results:
+Model comparison: 
+(negative 'elpd_diff' favors 1st model, positive favors 2nd) 
 
-using loo cv
-```{r}
-library(loo)
-loo1 <- loo(Mglm, cores = 2)
-print(loo1)
+elpd_diff        se 
+      7.0       4.4 
 
-loo2 <- loo(Mglm2, cores = 2)
-print(loo2)
-compare_models(loos = list(loo1, loo2))
-
-```
+An even simpler model that eliminates the vehicle stock, turns out to be less predictive compared to the model that accounts for vehicle stock.  
+   
