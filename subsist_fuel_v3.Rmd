@@ -46,15 +46,17 @@ hh_data2 <- hh_data%>%
   subset( an_gal_total>1)
 
 #check whether outcome variable is normally or log-normally distributed
-car::qqPlot(hh_data2$an_gal_total)
-qqPlot(hh_data2$an_gal_total, "lnorm")
+Aplot <- car::qqPlot(hh_data2$an_gal_total, xlab="normal quantiles", ylab="gasoline consumption", envelope=0.95, id=FALSE)
+Bplot <- qqPlot(hh_data2$an_gal_total, "lnorm", xlab="log-normal quantiles", ylab="gasoline consumption", envelope=0.95, id=FALSE)
+
 
 #eliminating extreme outliers based on distribution fit plot, eliminated households using more than 5000 gallons and harvesting more than 8000lbs.
 hh_data3 <- hh_data2%>%
   filter(sum_edible_wei_lbs < 8000 & an_gal_total < 5000 )
 #& commname!="Dot Lake"
 #recheck log-normal distribution
-qqp(hh_data3$an_gal_total, "lnorm")
+Cplot <- qqp(hh_data3$an_gal_total, "lnorm", xlab="log-normal quantiles", ylab="gasoline consumption", envelope=0.95, id=FALSE)
+
 
 #rescaling weight data into 1000s of lbs, 
 hh_data3 <- hh_data3%>%
@@ -78,7 +80,7 @@ an_gal_total (annual gasoline consumption in gallons per household) is log-norma
 #log-transforming an_gal_total
 hh_data3$gal_log <- log(hh_data3$an_gal_total)
 #Checking normal distribution fit
-qqp(hh_data3$gal_log, "norm")
+Dplot <- qqp(hh_data3$gal_log, "norm", xlab="normal quantiles", ylab="log(gasoline consumption)",envelope=0.95, id=FALSE)
 ```
 
 #Model estimation
@@ -122,8 +124,6 @@ Bayesian estimation can help in this case:
 ```{r}
 #Model 1
 Mglm <- stan_glmer(gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   + atvs + sms + boats + cars +   (1 + gasolinePrice | commname), data = modelData, family = gaussian(link = "identity"))
-
-
 
 
 #Model2
