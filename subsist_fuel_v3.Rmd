@@ -120,13 +120,13 @@ In both tests, the H0 is rejected, heterogeneous variances exists between commun
 Bayesian estimation can help in this case:
 "Group-by-group analyses, on the other hand, are valid but produces estimates that are relatively imprecise. While complete pooling or no pooling of data across groups is sometimes called for, models that ignore the grouping structures in the data tend to underfit or overfit (Gelman et al.,2013). Hierarchical modeling provides a compromise by allowing parameters to vary by group at lower levels of the hierarchy while estimating common parameters at higher levels. Inference for each group-level parameter is informed not only by the group-specific information contained in the data but also by the data for other groups as well. This is commonly referred to as borrowing strength or shrinkage." (Gabry and Goodrich 2018)
 
-###2 HB models
+###3 HB models
 ```{r}
-#Model 1
+#Model HB1
 Mglm <- stan_glmer(gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   + atvs + sms + boats + cars +   (1 + gasolinePrice | commname), data = modelData, family = gaussian(link = "identity"))
 
 
-#Model2
+#Model HB2
 Mglm2 <- stan_glmer(gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   + atvs + sms + boats + cars +   (1 | commname), data = modelData, family = gaussian(link = "identity"))
 launch_shinystan(Mglm2)
 
@@ -139,7 +139,7 @@ summary(Mglm2)
 plot(Mglm2, "rhat")
 plot(Mglm2, "ess")
 
-#Model3, an even simpler model without vehicle stock
+#Model HB3, an even simpler model without vehicle stock
 Mglm3 <- stan_glmer(gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   +   (1 | commname), data = modelData, family = gaussian(link = "identity"))
 ```
 
@@ -202,8 +202,6 @@ posterior <- as.matrix(Mglm2)
 
 modelData2 <- modelData%>%
   add_predicted_draws(Mglm2, fun = exp, n = 100, seed = 123, re_formula = NULL, category = ".category")
-
-
 
 #main hh_level predictors
 hh_posterior_fig <- bayesplot::mcmc_areas(posterior, pars = c( "FishSumEdible1000", "LargeGameSumEdible1000", "sms","boats","atvs","cars","(Intercept)"),prob = 0.8) +   ggplot2::scale_y_discrete(labels = c( "Fish harvest 1000lbs", "Game harvest 1000lbs","Snowmobiles","Boats","ATVs", "Cars & trucks","Intercept")) + 
@@ -326,7 +324,6 @@ harvestmedian <- modelData%>%
   mutate(edible = (FishSumEdible1000+LargeGameSumEdible1000)*1000,
           fishPerc =  FishSumEdible1000*1000/edible,
          gamePerc = LargeGameSumEdible1000*1000/edible)%>%
-  group_by(commname)%>%
     summarise(fishPercMean = mean(fishPerc),
             gamePercMean = mean(gamePerc),
             edibleMedian = median(edible),
@@ -343,29 +340,14 @@ Results will be ordered by expected predictive accuracy.
 ```{r}
 kfoldHB1 <- kfold(Mglm, K=10)
 kfoldHB2 <- kfold(Mglm2, K=10)
-compare_models(kfoldHB1, kfoldHB2, detail=TRUE) #negative 'elpd_diff' favors 1st model, positive favors 2nd
+kfoldHB3 <- kfold(Mglm3, K=10)
+compare_models(kfoldHB1, kfoldHB2, kfoldHB3, detail=TRUE) #negative 'elpd_diff' favors 1st model, positive favors 2nd
 ```
 Result:
 Model comparison: 
-(negative 'elpd_diff' favors 1st model, positive favors 2nd) 
+(ordered by highest ELPD)
 
-elpd_diff        se 
-      0.3       1.6 
-      
-The simpler model without the community-specific price variable is better in predicting gasoline consumption.
-
-```{r}
-library(rstanarm)
-kfoldHB3 <- kfold(Mglm3, K=10)
-kfoldHB2 <- kfold(Mglm2, K=10)
-compare_models(kfoldHB3, kfoldHB2, detail=TRUE) #negative 'elpd_diff' favors 1st model, positive favors 2nd
-```
-Results:
-Model comparison: 
-(negative 'elpd_diff' favors 1st model, positive favors 2nd) 
-
-elpd_diff        se 
-      7.0       4.4 
-
-An even simpler model that eliminates the vehicle stock, turns out to be less predictive compared to the model that accounts for vehicle stock.  
-   
+      elpd_diff se_diff
+Mglm   0.0       0.0   
+Mglm2 -1.3       1.9   
+Mglm3 -8.4       4.5 
