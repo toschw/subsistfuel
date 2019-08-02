@@ -190,7 +190,21 @@ kfoldHB2 <- kfold(Mglm2, K=10)
 kfoldHB3 <- kfold(Mglm3, K=10)
 compare_models(kfoldHB1, kfoldHB2, kfoldHB3,detail=TRUE)
 ```
+Model formulas: 
+  Mglm1:  gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000 + atvs + 
+	   sms + boats + cars + (1 | commname)
+  Mglm2:  gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000 + atvs + 
+	   sms + boats + cars + HHSIZE + (1 | commname)
+  Mglm3:  gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000 + atvs + 
+	   sms + boats + cars + HHSIZE + hhincadj_log + (1 | commname)
 
+Model comparison: 
+(ordered by highest ELPD)
+
+      elpd_diff se_diff
+Mglm2  0.0       0.0   
+Mglm1 -0.3       1.8   
+Mglm3 -3.4       1.7
 
 
 
