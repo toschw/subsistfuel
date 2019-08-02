@@ -110,6 +110,43 @@ modelData <- modelData%>%
   na.omit()
 ```
 
+#Community characteristics
+```{r}
+summary <- modelData%>%
+   mutate(hhincadj=exp(hhincadj_log))%>%
+  group_by(commname)%>%
+  summarise(ATV = mean(atvs),
+            SN = mean(sms),
+            CAR = mean(cars),
+            BOAT = mean(boats),
+            HH = median(HHSIZE),
+            income = median(hhincadj))
+
+```
+
+#prior summary providing a concise summary of the priors used
+```{r}
+prior_summary(Mglm3)
+
+```
+Priors for model 'Mglm1' 
+------
+Intercept (after predictors centered)
+ ~ normal(location = 0, scale = 1000)
+
+Coefficients
+ ~ normal(location = [0,0,0,...], scale = [100,100,100,...])
+
+Auxiliary (sigma)
+ ~ exponential(rate = 1)
+     **adjusted scale = 1.29 (adjusted rate = 1/adjusted scale)
+
+Covariance
+ ~ decov(reg. = 1, conc. = 1, shape = 1, scale = 1)
+
+
+
+
 ###Testing for homogeneity between communities, which exists if the p-value of the test is less than the significance level of 0.05. 
 In order to get valid parameter estimates, we need more or less a homogeneous response variable across groups (communities). See: Gabry and Goodrich 2018: https://cran.r-project.org/web/packages/rstanarm/vignettes/glmer.html  "An analysis that disregards between-group heterogeneity can yield parameter estimates that are wrong if there is between-group heterogeneity but would be relatively precise if there actually were no between-group heterogeneity."
 
@@ -132,66 +169,29 @@ In both tests, the H0 is rejected, heterogeneous variances exists between commun
 Bayesian estimation can help in this case:
 "Group-by-group analyses, on the other hand, are valid but produces estimates that are relatively imprecise. While complete pooling or no pooling of data across groups is sometimes called for, models that ignore the grouping structures in the data tend to underfit or overfit (Gelman et al.,2013). Hierarchical modeling provides a compromise by allowing parameters to vary by group at lower levels of the hierarchy while estimating common parameters at higher levels. Inference for each group-level parameter is informed not only by the group-specific information contained in the data but also by the data for other groups as well. This is commonly referred to as borrowing strength or shrinkage." (Gabry and Goodrich 2018)
 
-###3 HB models
+### HB models
 ```{r}
 #Model HB1
-Mglm <- stan_glmer(gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   + atvs + sms + boats + cars + HHSIZE + hhincadj_log +  (1 + gasolinePrice | commname), data = modelData, family = gaussian(link = "identity"))
+Mglm1 <- stan_glmer(gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   + atvs + sms + boats + cars +  (1 | commname), data = modelData, family = gaussian(link = "identity"), prior = normal(location=0,scale=100,autoscale=F),prior_intercept = normal(location=0,scale=1000,autoscale=F), prior_aux = exponential(rate=1))
 
+Mglm2 <- stan_glmer(gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   + atvs + sms + boats + cars + HHSIZE +  (1 | commname), data = modelData, family = gaussian(link = "identity"), prior = normal(location=0,scale=100,autoscale=F),prior_intercept = normal(location=0,scale=1000,autoscale=F), prior_aux = exponential(rate=1))
 
-#Model HB2
-Mglm2 <- stan_glmer(gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   + atvs + sms + boats + cars + HHSIZE + hhincadj_log + (1 + gasolinePrice | commname), data = modelData, family = gaussian(link = "identity"))
-
-#Model HB3 without community-specific gasoline price
-Mglm3 <- stan_glmer(gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   + atvs + sms + boats + cars + HHSIZE + hhincadj_log +  (1 | commname), data = modelData, family = gaussian(link = "identity"))
-
-Mglm4 <- stan_glmer(gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   + atvs + sms + boats + cars + HHSIZE +  (1 | commname), data = modelData, family = gaussian(link = "identity"))
-
-Mglm5 <- stan_glmer(gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   + atvs + sms + boats + cars +   (1 | commname), data = modelData, family = gaussian(link = "identity"))
-
-Mglm6 <- stan_glmer(gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   + atvs + sms + boats + cars + HHSIZE + (1 + gasolinePrice | commname), data = modelData, family = gaussian(link = "identity"))
+Mglm3 <- stan_glmer(gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   + atvs + sms + boats + cars + HHSIZE + hhincadj_log +  (1 | commname), data = modelData, family = gaussian(link = "identity"),prior = normal(location=0,scale=100,autoscale=F),prior_intercept = normal(location=0,scale=1000,autoscale=F), prior_aux = exponential(rate=1))
 ```
+
 
 #Validation 
 We used k=10-fold cross-validation to compare the two models above. 
 Following http://mc-stan.org/rstanarm/reference/loo.stanreg.html#k-fold-cv
 Results will be ordered by expected predictive accuracy. 
 ```{r}
-kfoldHB1 <- kfold(Mglm, K=10)
+kfoldHB1 <- kfold(Mglm1, K=10)
 kfoldHB2 <- kfold(Mglm2, K=10)
 kfoldHB3 <- kfold(Mglm3, K=10)
-kfoldHB4 <- kfold(Mglm4, K=10)
-kfoldHB5 <- kfold(Mglm5, K=10)
-kfoldHB6 <- kfold(Mglm6, K=10)
-compare_models(kfoldHB1, kfoldHB2, kfoldHB3, kfoldHB4,kfoldHB5, kfoldHB6, detail=TRUE)
-compare_models(kfoldHB4,kfoldHB5, kfoldHB6, detail=TRUE)
-#negative 'elpd_diff' favors 1st model, positive favors 2nd
+compare_models(kfoldHB1, kfoldHB2, kfoldHB3,detail=TRUE)
 ```
-Model formulas: 
-  Mglm:  gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000 + atvs + 
-	   sms + boats + cars + HHSIZE + hhincadj_log + (1 + gasolinePrice | 
-	   commname)
-  Mglm2:  gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000 + atvs + 
-	   sms + boats + cars + HHSIZE + hhincadj_log + (1 + gasolinePrice | 
-	   commname)
-  Mglm3:  gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000 + atvs + 
-	   sms + boats + cars + HHSIZE + hhincadj_log + (1 | commname)
-  Mglm4:  gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000 + atvs + 
-	   sms + boats + cars + HHSIZE + (1 | commname)
-  Mglm5:  gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000 + atvs + 
-	   sms + boats + cars + (1 | commname)
-  Mglm6:  gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000 + atvs + 
-	   sms + boats + cars + HHSIZE + (1 + gasolinePrice | commname)
 
-Model comparison: 
-(ordered by highest ELPD)
 
-      elpd_diff se_diff
-Mglm5  0.0       0.0   
-Mglm6 -0.4       1.6   
-Mglm4 -1.4       2.2   
-Mglm2 -1.7       2.1   
-Mglm  -3.9       2.8   
-Mglm3 -4.4       2.4 
 
 
 #Diagnostics for Model5
@@ -206,7 +206,7 @@ plot(Mglm5, "ess")
 prior_summary(object = Mglm5)
 Mglm5
 summary(Mglm5)
-launch_shinystan(Mglm5)
+launch_shinystan(Mglm1)
 
 
 library(bayesplot)
@@ -247,15 +247,45 @@ ggsave("yyrepGrid_fig.bmp", plot = last_plot(), device = "bmp", path = NULL,
 
 ##Linear model with the same predictors as the best performing HB model, in this case HB5
 Following https://mc-stan.org/users/documentation/case-studies/tutorial_rstanarm.html#model-3-varying-intercept-and-slope-model-with-a-single-predictor
+we estimate maximum likelihood, not REML = restricted maxim likelihood
 ```{r}
 library(lme4)
-Mlinear <- lmer(formula = gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   + atvs + sms + boats + cars +   (1 + | commname), data = modelData, REML = FALSE)
+Mlinear <- lmer(formula = gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   + atvs + sms + boats + cars +   (1 | commname), data = modelData, REML = FALSE)
+
 summary(Mlinear)
 isSingular(Mlinear, tol = 1e-05)
 MlinearIntercepts <- ranef(Mlinear)$commname
 linearPredict <- as.data.frame(predict(Mlinear))
 colnames(linearPredict)[1] <- "linearPredict"
 ```
+
+#Linear Models
+```{r}
+Ml1 <- lmer(gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   + atvs + sms + boats + cars + HHSIZE + hhincadj_log +  (1 + gasolinePrice | commname), data = modelData, REML = FALSE)
+
+Ml2 <- lmer(gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   + atvs + sms + boats + cars + HHSIZE + hhincadj_log + (1 + gasolinePrice | commname), data = modelData, REML = FALSE)
+
+Ml3 <- lmer(gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   + atvs + sms + boats + cars + HHSIZE + hhincadj_log +  (1 | commname), data = modelData, REML = FALSE)
+
+Ml4 <- lmer(gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   + atvs + sms + boats + cars + HHSIZE +  (1 | commname), data = modelData, REML = FALSE)
+
+Ml5 <- lmer(gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   + atvs + sms + boats + cars +   (1 | commname), data = modelData, REML = FALSE)
+
+Ml6 <- lmer(gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   + atvs + sms + boats + cars + HHSIZE + (1 + gasolinePrice | commname), data = modelData, REML = FALSE)
+
+
+kfoldMl3 <- kfold(Ml3, K=10)
+kfoldMl4 <- kfold(Ml4, K=10)
+kfoldMl5 <- kfold(Ml5, K=10)
+compare_models(kfoldMl1, kfoldMl2, kfoldMl3, kfoldMl4,kfoldMl5, kfoldMl6, detail=TRUE)
+compare_models(kfoldMl1, kfoldMl2, kfoldMl3, kfoldMl4,kfoldMl5, kfoldMl6, detail=TRUE)
+```
+
+
+
+
+
+
 
 
 ###Comparing PPC with linear model predictions
@@ -293,6 +323,15 @@ con_test_fig
 ggsave("con_test_fig.bmp", plot = last_plot(), device = "bmp", path = NULL,
   scale = 1, width = 90, height = 90, units = "mm",
   dpi = 300, limitsize = TRUE)
+```
+
+
+##Descriptive data for presentation in the paper
+```{r}
+descTable <- modelData%>%
+  summarise(hhsize = median(HHSIZE),
+            meanhhsize = median(HHSIZE))
+
 ```
 
 
