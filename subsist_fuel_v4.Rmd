@@ -179,6 +179,14 @@ Mglm2 <- stan_glmer(gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   +
 Mglm3 <- stan_glmer(gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   + atvs + sms + boats + cars + HHSIZE + hhincadj_log +  (1 | commname), data = modelData, family = gaussian(link = "identity"),prior = normal(location=0,scale=100,autoscale=F),prior_intercept = normal(location=0,scale=1000,autoscale=F), prior_aux = exponential(rate=1))
 ```
 
+#model summary output
+prior_summary(object = Mglm2)
+Mglm2
+summary(Mglm2)
+launch_shinystan(Mglm2)
+
+
+
 
 #Validation 
 We used k=10-fold cross-validation to compare the two models above. 
@@ -208,21 +216,21 @@ Mglm3 -3.4       1.7
 
 
 
-#Diagnostics for Model5
-##Predictive checks
+#Diagnostics for Model2
 ```{r}
 #Evaluating model convergence and diagnose model through STAN online portal
-plot(Mglm5, "rhat")
-plot(Mglm5, "ess")
+rhat_fig <- plot(Mglm2, "rhat")
+ggsave("rhat_fig.bmp", plot = last_plot(), device = "bmp", path = NULL,
+  scale = 1, width = 90, height = 90, units = "mm",
+  dpi = 300, limitsize = TRUE)
+ess_fig <- plot(Mglm2, "ess")
+ggsave("ess_fig.bmp", plot = last_plot(), device = "bmp", path = NULL,
+  scale = 1, width = 90, height = 90, units = "mm",
+  dpi = 300, limitsize = TRUE)
+```
 
-
-#model summary output
-prior_summary(object = Mglm5)
-Mglm5
-summary(Mglm5)
-launch_shinystan(Mglm1)
-
-
+##Predictive checks
+```{r}
 library(bayesplot)
 library(rstan)
 if (!require("devtools")) {
@@ -233,21 +241,21 @@ devtools::install_github("stan-dev/bayesplot")
 #predictive checking
 theme_set(theme_cowplot(font_size=7))
 color_scheme_set("brightblue")
-Tmean <- Mglm5 %>%
+Tmean <- Mglm2 %>%
   posterior_predict(draws = 500) %>%
-  ppc_stat(y = Mglm5$y,
+  ppc_stat(y = Mglm2$y,
              stat = "mean")
-Tsd <- Mglm5 %>%
+Tsd <- Mglm2 %>%
   posterior_predict(draws = 500) %>%
-  ppc_stat(y = Mglm5$y,
+  ppc_stat(y = Mglm2$y,
              stat = "sd")
-Tmin <- Mglm5 %>%
+Tmin <- Mglm2 %>%
   posterior_predict(draws = 500) %>%
-  ppc_stat(y = Mglm5$y,
+  ppc_stat(y = Mglm2$y,
              stat = "min")
-Tmax <- Mglm5 %>%
+Tmax <- Mglm2 %>%
   posterior_predict(draws = 500) %>%
-  ppc_stat(y = Mglm5$y,
+  ppc_stat(y = Mglm2$y,
              stat = "max")
 #combining plots
 library(cowplot)
@@ -286,13 +294,6 @@ Ml4 <- lmer(gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   + atvs + 
 Ml5 <- lmer(gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   + atvs + sms + boats + cars +   (1 | commname), data = modelData, REML = FALSE)
 
 Ml6 <- lmer(gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   + atvs + sms + boats + cars + HHSIZE + (1 + gasolinePrice | commname), data = modelData, REML = FALSE)
-
-
-kfoldMl3 <- kfold(Ml3, K=10)
-kfoldMl4 <- kfold(Ml4, K=10)
-kfoldMl5 <- kfold(Ml5, K=10)
-compare_models(kfoldMl1, kfoldMl2, kfoldMl3, kfoldMl4,kfoldMl5, kfoldMl6, detail=TRUE)
-compare_models(kfoldMl1, kfoldMl2, kfoldMl3, kfoldMl4,kfoldMl5, kfoldMl6, detail=TRUE)
 ```
 
 
@@ -306,8 +307,8 @@ compare_models(kfoldMl1, kfoldMl2, kfoldMl3, kfoldMl4,kfoldMl5, kfoldMl6, detail
 ```{r}
 library(gginnards)
 library(stringr)
-draws <- as.data.frame(t(posterior_predict(Mglm5, draws = 50)))
-comPredict <- cbind(Mglm5$y,draws,linearPredict)
+draws <- as.data.frame(t(posterior_predict(Mglm2, draws = 50)))
+comPredict <- cbind(Mglm2$y,draws,linearPredict)
 
 library(reshape2)
 data<- melt(comPredict)
@@ -358,7 +359,8 @@ modelData2 <- modelData%>%
   add_predicted_draws(Mglm2, fun = exp, n = 100, seed = 123, re_formula = NULL, category = ".category")
 
 #main hh_level predictors
-hh_posterior_fig <- bayesplot::mcmc_areas(posterior, pars = c( "FishSumEdible1000", "LargeGameSumEdible1000", "sms","boats","atvs","cars","(Intercept)"),prob = 0.8) +   ggplot2::scale_y_discrete(labels = c( "Fish harvest 1000lbs", "Game harvest 1000lbs","Snowmobiles","Boats","ATVs", "Cars & trucks","Intercept")) + 
+hh_posterior_fig <- bayesplot::mcmc_areas(posterior, 
+                                          pars = c("HHSIZE", "FishSumEdible1000", "LargeGameSumEdible1000", "sms","boats","atvs","cars","(Intercept)"),prob = 0.8) +                 ggplot2::scale_y_discrete(labels = c("household size","Fish harvest 1000lbs", "Game harvest 1000lbs","Snowmobiles","Boats","ATVs", "Cars & trucks","Intercept")) + 
   ggplot2::xlab("Posterior coefficient estimate")+
   ggplot2::ylab("Density")+
   ggplot2::theme_update(text = element_text(size=7)) + # sets text size to points, 7pts required by Elsevier
@@ -380,22 +382,5 @@ pred_bands <- ggplot(modelData2, aes(y = commname, x = .prediction)) +
 pred_bands
 ggsave("pred_bands_fig.bmp", plot = last_plot(), device = "bmp", path = NULL,
   scale = 1, width = 140, height = 70, units = "mm",
-  dpi = 300, limitsize = TRUE)
-
-#gasoline price predictor by community, probably not needed as we are not interested in the coefficient estimates as much as overall prediction accuracy
-price_posterior_fig <- mcmc_areas(posterior, pars = c("b[gasolinePrice commname:Dry_Creek]","b[gasolinePrice commname:Bettles]","b[gasolinePrice commname:Tok]","b[gasolinePrice commname:Dot_Lake]","b[gasolinePrice commname:Evansville]","b[gasolinePrice commname:Anaktuvuk_Pass]","b[gasolinePrice commname:Wiseman]","b[gasolinePrice commname:Alatna]","b[gasolinePrice commname:Beaver]","b[gasolinePrice commname:Allakaket]"),prob = 0.8) +
-  ggplot2::scale_y_discrete(labels = c( "Dry Creek","Bettles", "Tok","Dot Lake","Evansville","Anaktuvuk Pass", "Wiseman","Alatna","Beaver","Allakaket")) + 
-  ggplot2::xlim(-1,+1) + 
-  ggplot2::xlab("Posterior coefficient estimate: gasoline price")+
-  ggplot2::ylab("Density")+
-  ggplot2::geom_line(size=0.01) +
-  #ggplot2::geom_segment(aes(x = 0.8, y = 7, xend = 0.8, yend = 8),arrow = arrow(length = unit(0.3, "cm"))) +
-  #ggplot2::annotate("text", x = 0.82, y = 6.5, label = "higher Ak Native %",size=1.5) +
-  #ggplot2::geom_segment(aes(x = 0.8, y = 4, xend = 0.8, yend = 3),arrow = arrow(length = unit(0.3, "cm")))+
-  #ggplot2::annotate("text", x = 0.82, y = 4.5, label = "lower Ak Native %",size=1.5) +
- ggplot2::theme_update(text = element_text(size=7))  # sets text size to points, 7pts required by Elsevier
-price_posterior_fig
-ggsave("price_posterior_fig.bmp", plot = last_plot(), device = "bmp", path = NULL,
-  scale = 1, width = 140, height = 90, units = "mm",
   dpi = 300, limitsize = TRUE)
 ```
