@@ -58,7 +58,7 @@ hh_data2 <- hh_data%>%
 
 #check whether outcome variable is normally or log-normally distributed
 Aplot <- car::qqPlot(hh_data2$an_gal_total, xlab="normal quantiles", ylab="gasoline consumption", envelope=0.95, id=FALSE)
-Bplot <- qqPlot(hh_data2$an_gal_total, "lnorm", xlab="log-normal quantiles", ylab="gasoline consumption", envelope=0.95, id=FALSE)
+Bplot <- car::qqPlot(hh_data2$an_gal_total, "lnorm", xlab="log-normal quantiles", ylab="gasoline consumption", envelope=0.95, id=FALSE)
 
 
 #eliminating extreme outliers based on distribution fit plot, eliminated households using more than 5000 gallons and harvesting more than 8000lbs.
@@ -66,7 +66,7 @@ hh_data3 <- hh_data2%>%
   filter(sum_edible_wei_lbs < 8000 & an_gal_total < 5000 )
 #& commname!="Dot Lake"
 #recheck log-normal distribution
-Cplot <- qqp(hh_data3$an_gal_total, "lnorm", xlab="log-normal quantiles", ylab="gasoline consumption", envelope=0.95, id=FALSE)
+Cplot <- car::qqPlot(hh_data3$an_gal_total, "lnorm", xlab="log-normal quantiles", ylab="gasoline consumption", envelope=0.95, id=FALSE)
 
 
 #rescaling weight data into 1000s of lbs, 
@@ -91,7 +91,7 @@ an_gal_total (annual gasoline consumption in gallons per household) is log-norma
 #log-transforming an_gal_total
 hh_data3$gal_log <- log(hh_data3$an_gal_total)
 #Checking normal distribution fit
-Dplot <- qqp(hh_data3$gal_log, "norm", xlab="normal quantiles", ylab="log(gasoline consumption)",envelope=0.95, id=FALSE)
+Dplot <- car::qqPlot(hh_data3$gal_log, "norm", xlab="normal quantiles", ylab="log(gasoline consumption)",envelope=0.95, id=FALSE)
 
 #log-transforming income variable
 hh_data3$hhincadj_log <-ifelse(hh_data3$hhincadj==0,0,log(hh_data3$hhincadj))
@@ -120,8 +120,10 @@ summary <- modelData%>%
             CAR = mean(cars),
             BOAT = mean(boats),
             HH = median(HHSIZE),
-            income = median(hhincadj))
-
+            income = median(hhincadj),
+            gal = median(an_gal_total),
+            fish = median(FishSumEdible1000)*1000,
+            game = median(LargeGameSumEdible1000)*1000)
 ```
 
 #prior summary providing a concise summary of the priors used
@@ -172,19 +174,20 @@ Bayesian estimation can help in this case:
 ### HB models
 ```{r}
 #Model HB1
-Mglm1 <- stan_glmer(gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   + atvs + sms + boats + cars +  (1 | commname), data = modelData, family = gaussian(link = "identity"), prior = normal(location=0,scale=100,autoscale=F),prior_intercept = normal(location=0,scale=1000,autoscale=F), prior_aux = exponential(rate=1))
+Mglm1 <- stan_glmer(gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   + atvs + sms + boats + cars +  (1 | commname), data = modelData, family = gaussian(link = "identity"), prior = normal(location=0,scale=10,autoscale=F),prior_intercept = normal(location=0,scale=10,autoscale=F), prior_aux = exponential(rate=1))
 
-Mglm2 <- stan_glmer(gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   + atvs + sms + boats + cars + HHSIZE +  (1 | commname), data = modelData, family = gaussian(link = "identity"), prior = normal(location=0,scale=100,autoscale=F),prior_intercept = normal(location=0,scale=1000,autoscale=F), prior_aux = exponential(rate=1))
+Mglm2 <- stan_glmer(gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   + atvs + sms + boats + cars + HHSIZE +  (1 | commname), data = modelData, family = gaussian(link = "identity"), prior = normal(location=0,scale=10,autoscale=F),prior_intercept = normal(location=0,scale=10,autoscale=F), prior_aux = exponential(rate=1), adapt_delta =0.99)
 
-Mglm3 <- stan_glmer(gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   + atvs + sms + boats + cars + HHSIZE + hhincadj_log +  (1 | commname), data = modelData, family = gaussian(link = "identity"),prior = normal(location=0,scale=100,autoscale=F),prior_intercept = normal(location=0,scale=1000,autoscale=F), prior_aux = exponential(rate=1))
+Mglm3 <- stan_glmer(gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   + atvs + sms + boats + cars + HHSIZE + hhincadj_log +  (1 | commname), data = modelData, family = gaussian(link = "identity"),prior = normal(location=0,scale=10,autoscale=F),prior_intercept = normal(location=0,scale=10,autoscale=F), prior_aux = exponential(rate=1), adapt_delta = 0.99)
 ```
 
-#model summary output
-prior_summary(object = Mglm2)
-Mglm2
-summary(Mglm2)
-launch_shinystan(Mglm2)
-
+#Quick model check
+```{r}
+prior_summary(object = Mglm1)
+Mglm1
+summary(Mglm1)
+launch_shinystan(Mglm1)
+```
 
 
 
@@ -198,6 +201,7 @@ kfoldHB2 <- kfold(Mglm2, K=10)
 kfoldHB3 <- kfold(Mglm3, K=10)
 compare_models(kfoldHB1, kfoldHB2, kfoldHB3,detail=TRUE)
 ```
+
 Model formulas: 
   Mglm1:  gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000 + atvs + 
 	   sms + boats + cars + (1 | commname)
@@ -210,20 +214,18 @@ Model comparison:
 (ordered by highest ELPD)
 
       elpd_diff se_diff
-Mglm2  0.0       0.0   
-Mglm1 -0.3       1.8   
-Mglm3 -3.4       1.7
+Mglm1  0.0       0.0   
+Mglm2 -1.3       2.0   
+Mglm3 -2.1       2.4  
 
-
-
-#Diagnostics for Model2
+#Diagnostics for Model1
 ```{r}
 #Evaluating model convergence and diagnose model through STAN online portal
-rhat_fig <- plot(Mglm2, "rhat")
+rhat_fig <- plot(Mglm1, "rhat")
 ggsave("rhat_fig.bmp", plot = last_plot(), device = "bmp", path = NULL,
   scale = 1, width = 90, height = 90, units = "mm",
   dpi = 300, limitsize = TRUE)
-ess_fig <- plot(Mglm2, "ess")
+ess_fig <- plot(Mglm1, "ess")
 ggsave("ess_fig.bmp", plot = last_plot(), device = "bmp", path = NULL,
   scale = 1, width = 90, height = 90, units = "mm",
   dpi = 300, limitsize = TRUE)
@@ -241,19 +243,19 @@ devtools::install_github("stan-dev/bayesplot")
 #predictive checking
 theme_set(theme_cowplot(font_size=7))
 color_scheme_set("brightblue")
-Tmean <- Mglm2 %>%
+Tmean <- Mglm1 %>%
   posterior_predict(draws = 500) %>%
   ppc_stat(y = Mglm2$y,
              stat = "mean")
-Tsd <- Mglm2 %>%
+Tsd <- Mglm1 %>%
   posterior_predict(draws = 500) %>%
   ppc_stat(y = Mglm2$y,
              stat = "sd")
-Tmin <- Mglm2 %>%
+Tmin <- Mglm1 %>%
   posterior_predict(draws = 500) %>%
   ppc_stat(y = Mglm2$y,
              stat = "min")
-Tmax <- Mglm2 %>%
+Tmax <- Mglm1 %>%
   posterior_predict(draws = 500) %>%
   ppc_stat(y = Mglm2$y,
              stat = "max")
@@ -281,38 +283,16 @@ linearPredict <- as.data.frame(predict(Mlinear))
 colnames(linearPredict)[1] <- "linearPredict"
 ```
 
-#Linear Models
-```{r}
-Ml1 <- lmer(gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   + atvs + sms + boats + cars + HHSIZE + hhincadj_log +  (1 + gasolinePrice | commname), data = modelData, REML = FALSE)
-
-Ml2 <- lmer(gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   + atvs + sms + boats + cars + HHSIZE + hhincadj_log + (1 + gasolinePrice | commname), data = modelData, REML = FALSE)
-
-Ml3 <- lmer(gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   + atvs + sms + boats + cars + HHSIZE + hhincadj_log +  (1 | commname), data = modelData, REML = FALSE)
-
-Ml4 <- lmer(gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   + atvs + sms + boats + cars + HHSIZE +  (1 | commname), data = modelData, REML = FALSE)
-
-Ml5 <- lmer(gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   + atvs + sms + boats + cars +   (1 | commname), data = modelData, REML = FALSE)
-
-Ml6 <- lmer(gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   + atvs + sms + boats + cars + HHSIZE + (1 + gasolinePrice | commname), data = modelData, REML = FALSE)
-```
-
-
-
-
-
-
-
-
 ###Comparing PPC with linear model predictions
 ```{r}
 library(gginnards)
 library(stringr)
-draws <- as.data.frame(t(posterior_predict(Mglm2, draws = 50)))
-comPredict <- cbind(Mglm2$y,draws,linearPredict)
+draws <- as.data.frame(t(posterior_predict(Mglm1, draws = 50)))
+comPredict <- cbind(Mglm1$y,draws,linearPredict)
 
 library(reshape2)
 data<- melt(comPredict)
-data$type <- with(data, ifelse(str_detect(data$variable,"V"),"y HB",ifelse(variable=="Mglm5$y","y","y ML")))
+data$type <- with(data, ifelse(str_detect(data$variable,"V"),"y HB",ifelse(variable=="Mglm1$y","y","y ML")))
 
 PPC <- ggplot(data,aes(x=value, line=variable, color=type)) + 
   geom_line(alpha=0.5, stat="density", show.legend=TRUE, size=0.3) +
@@ -325,7 +305,6 @@ ggsave("PPC_fig.bmp", plot = last_plot(), device = "bmp", path = NULL,
   scale = 1, width = 90, height = 90, units = "mm",
   dpi = 300, limitsize = TRUE)
 ```
-
 
 ##Convergence check
 ```{r}
@@ -340,27 +319,17 @@ ggsave("con_test_fig.bmp", plot = last_plot(), device = "bmp", path = NULL,
   dpi = 300, limitsize = TRUE)
 ```
 
-
-##Descriptive data for presentation in the paper
-```{r}
-descTable <- modelData%>%
-  summarise(hhsize = median(HHSIZE),
-            meanhhsize = median(HHSIZE))
-
-```
-
-
 ##Posterior distributions for estimators
 not as important as we are not interested in marginal contributions of each variable and rather in the predictive capabilities of the models
 ```{r}
-posterior <- as.matrix(Mglm2)
+posterior <- as.matrix(Mglm1)
 
 modelData2 <- modelData%>%
-  add_predicted_draws(Mglm2, fun = exp, n = 100, seed = 123, re_formula = NULL, category = ".category")
+  add_predicted_draws(Mglm1, fun = exp, n = 100, seed = 123, re_formula = NULL, category = ".category")
 
 #main hh_level predictors
 hh_posterior_fig <- bayesplot::mcmc_areas(posterior, 
-                                          pars = c("HHSIZE", "FishSumEdible1000", "LargeGameSumEdible1000", "sms","boats","atvs","cars","(Intercept)"),prob = 0.8) +                 ggplot2::scale_y_discrete(labels = c("household size","Fish harvest 1000lbs", "Game harvest 1000lbs","Snowmobiles","Boats","ATVs", "Cars & trucks","Intercept")) + 
+                                          pars = c("FishSumEdible1000", "LargeGameSumEdible1000", "sms","boats","atvs","cars","(Intercept)"),prob = 0.8) +                 ggplot2::scale_y_discrete(labels = c("Fish harvest 1000lbs", "Game harvest 1000lbs","Snowmobiles","Boats","ATVs", "Cars & trucks","Intercept")) + 
   ggplot2::xlab("Posterior coefficient estimate")+
   ggplot2::ylab("Density")+
   ggplot2::theme_update(text = element_text(size=7)) + # sets text size to points, 7pts required by Elsevier
@@ -382,5 +351,154 @@ pred_bands <- ggplot(modelData2, aes(y = commname, x = .prediction)) +
 pred_bands
 ggsave("pred_bands_fig.bmp", plot = last_plot(), device = "bmp", path = NULL,
   scale = 1, width = 140, height = 70, units = "mm",
+  dpi = 300, limitsize = TRUE)
+```
+
+#Comparing communities in their annual gasoline consumption
+E.g. calculating the posterior probability that average gasoline consumption in community A is higher than in community B
+```{r}
+# Obtain community-level varying intercept beta_0j
+# draws for overall mean
+mu_a_sims <- as.matrix(Mglm1, 
+                       pars = "(Intercept)")
+# draws for 10 communities' household-level error
+u_sims <- as.matrix(Mglm1, 
+                    regex_pars = "b\\[\\(Intercept\\) commname\\:")
+# draws for 10 communities' varying intercepts               
+a_sims <- as.numeric(mu_a_sims) + u_sims          
+
+# Obtain sigma_y and sigma_alpha^2
+# draws for sigma_y
+s_y_sims <- as.matrix(Mglm1, 
+                       pars = "sigma")
+# draws for sigma_alpha^2
+s__alpha_sims <- as.matrix(Mglm1, 
+                       pars = "Sigma[commname:(Intercept),(Intercept)]")
+
+# Compute mean, SD, median, and 95% credible interval of varying intercepts
+
+# Posterior mean and SD of each alpha
+a_mean <- apply(X = a_sims,     # posterior mean
+                MARGIN = 2,
+                FUN = mean)
+a_sd <- apply(X = a_sims,       # posterior SD
+              MARGIN = 2,
+              FUN = sd)
+
+# Posterior median and 95% credible interval
+a_quant <- apply(X = a_sims, 
+                 MARGIN = 2, 
+                 FUN = quantile, 
+                 probs = c(0.025, 0.50, 0.975))
+a_quant <- data.frame(t(a_quant))
+names(a_quant) <- c("Q2.5", "Q50", "Q97.5")
+
+# Combine summary statistics of posterior simulation draws
+a_df <- data.frame(a_mean, a_sd, a_quant)
+#converting back to annual gallons, exponentiate
+a_df_exp <- a_df%>%
+  tibble::rownames_to_column('commname') #this keeps rownames preserved in code thereafter
+a_df_exp2 <- a_df_exp%>%
+  dplyr::mutate(a_mean = exp(a_mean),
+                   a_sd = exp(a_sd),
+                   Q2.5 = exp(Q2.5),
+                 Q50 = exp(Q50),
+                 Q97.5 = exp(Q97.5))
+a_df_exp2$commname <- sub('.*:', '', a_df_exp2$commname)
+a_df_exp2$commname <- gsub('.$', '', a_df_exp2$commname)
+```
+
+#Caterpillar plot of community varying intercepts with 95% credible intervals
+```{r}
+#specify order for ggplot to recognize
+a_df_exp2$commname <- factor(a_df_exp2$commname, levels = a_df_exp2$commname[order(a_df_exp2$a_mean)])
+
+# Plot community-level beta zero's posterior mean and 95% credible interval
+ggplot(data = a_df_exp2, 
+       aes(x = commname, 
+           y = a_mean)) +
+  geom_pointrange(aes(ymin = Q2.5, 
+                      ymax = Q97.5) + 
+  geom_hline(yintercept = mean(a_df_exp2$a_mean), 
+             size = 0.5, 
+             col = "red") + 
+    scale_y_continuous(expression(paste("exp(varying intercept), ", beta["0j"]))) + 
+  theme(axis.text.x = element_text(angle = 45, vjust=0.5, size=7), axis.title.x=element_blank(), axis.text.y = element_text(size=7), axis.title.y = element_text(size=7))
+
+  
+          
+```
+
+
+#Interpretation of model summary output for household-level coefficients
+Since only the response variable was log-transformed, we can exponentiate each  coefficient subtract 1 and multiply by 100 to get the response of every one-unit increase in the independent variable. https://data.library.virginia.edu/interpreting-log-transformations-in-a-linear-model/
+```{r}
+Mglm1_df <- as.data.frame(summary(Mglm1))
+#change columnnames for better reference below
+Mglm1_df2 <- Mglm1_df%>%
+  tibble::rownames_to_column('variable') #this keeps rownames preserved in code thereafter
+colnames(Mglm1_df2) <- c("variable", "mean",  "mcse",  "sd",    "Q2.5",  "Q25",   "Q50",   "Q75",   "Q97.5", "n_eff", "Rhat" ) 
+
+#expoentiate for better interpretation of the coefficients
+Mglm1_df2 <- Mglm1_df2%>%
+  mutate(mean_exp = (exp(mean)-1)*100,
+         Q2.5_exp = (exp(Q2.5)-1)*100,
+         Q97.5_exp = (exp(Q97.5)-1)*100))
+#eliminate rows related with intercepts
+keep <- c("FishSumEdible1000","LargeGameSumEdible1000","atvs","sms","boats","cars") 
+Mglm1_df3 <- Mglm1_df2%>%
+  filter(variable %in% keep)
+
+ggsave("fig_comm_intercepts.bmp", plot = last_plot(), device = "bmp", path = NULL,
+  scale = 1, width = 90, height = 90, units = "mm",
+  dpi = 300, limitsize = TRUE)
+```
+
+#Plot
+```{r}
+#specify order for ggplot to recognize
+Mglm1_df3$variable <- factor(Mglm1_df3$variable, levels = Mglm1_df3$variable[order(Mglm1_df3$mean_exp)])
+# Plot community-level beta zero's posterior mean and 95% credible interval
+ggplot(data = Mglm1_df3, 
+       aes(x = variable, 
+           y = mean_exp)) +
+  geom_pointrange(aes(ymin = Q2.5_exp, 
+                      ymax = Q97.5_exp) + 
+  scale_y_continuous(expression(paste("% change in gasoline consumption / hh"," ,", beta[]))) + 
+  theme(axis.text.x = element_text(angle = 45, vjust=0.5, size=7), axis.title.x=element_blank(), axis.text.y = element_text(size=7), axis.title.y = element_text(size=7))+
+  scale_x_discrete(labels = c("Fish harvest 1000lbs", "Game harvest 1000lbs","Snowmobiles","Boats","ATVs", "Cars & trucks"))
+
+ggsave("fig_hh_coeff_interpret.bmp", plot = last_plot(), device = "bmp", path = NULL,
+  scale = 1, width = 90, height = 90, units = "mm",
+  dpi = 300, limitsize = TRUE)
+```
+
+#Harvest weights and gasoline consumption plotted
+
+```{r}
+modelDataPlot <- modelData
+modelDataPlot$GameLabel <- with(modelDataPlot,ifelse(LargeGameSumEdible1000>3,commname,""))
+modelDataPlot$FishLabel <- with(modelDataPlot,ifelse(FishSumEdible1000>1.3,commname,""))
+ 
+GamePlot <- ggplot(data = modelDataPlot, aes(x=LargeGameSumEdible1000, y=an_gal_total, color=commname, label = GameLabel)) +
+ geom_point()+
+  geom_text(hjust=1.01, vjust=.1, size=3) +
+  xlab("Large game harvest in 1000s of lbs")+
+  ylab("Annual gasoline consumption in gallons")+
+theme(axis.text=element_text(size=7),axis.title=element_text(size=7),legend.position="none")
+GamePlot
+
+FishPlot <- ggplot(data = modelDataPlot, aes(x=FishSumEdible1000, y=an_gal_total, color=commname, label = FishLabel)) +
+ geom_point()+
+  geom_text(hjust=1.01, vjust=.1, size=3) +
+  xlab("Fish harvest in 1000s of lbs")+
+  ylab("Annual gasoline consumption in gallons")+
+theme(axis.text=element_text(size=7),axis.title=element_text(size=7),legend.position=c(0.8, 0.8),legend.title = element_blank())
+FishPlot
+
+theme_set(theme_cowplot(font_size=7))
+plot_grid(GamePlot, FishPlot, labels = c("A", "B"), ncol = 2)
+ggsave("Harvest_fig.bmp", plot = last_plot(), device = "bmp", path = NULL,
+  scale = 1, width = 190, height = 90, units = "mm",
   dpi = 300, limitsize = TRUE)
 ```
