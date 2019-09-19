@@ -17,6 +17,7 @@ library(tidybayes)
 library(rstanarm)
 library(ggplot2)
 library(car)
+library(cowplot)
 
 
 #data <- read.csv("C:/Users/Toby/Dropbox/DATA/Dropbox/DATA/2011_Schwoerer_subsistence_fuel_survey/Subset4R.csv",stringsAsFactor=FALSE)
@@ -120,9 +121,115 @@ summary <- modelData%>%
             CAR = mean(cars),
             BOAT = mean(boats),
             HH = median(HHSIZE),
-            income = median(hhincadj))
-
+            income = median(hhincadj),
+            gal = median(an_gal_total),
+            fish = median(FishSumEdible1000)*1000,
+            game = median(LargeGameSumEdible1000)*1000)
 ```
+
+##Harvest weights and gasoline consumption plotted
+```{r}
+#labeling efficient households
+#modelDataPlot <- modelData
+#modelDataPlot$GameLabel <- with(modelDataPlot,ifelse(LargeGameSumEdible1000>3,commname,""))
+modelData$efficiency <- with(modelDataPlot,ifelse(LargeGameSumEdible1000>3,"efficient",""))
+#modelDataPlot$FishLabel <- with(modelDataPlot,ifelse(FishSumEdible1000>1.3 & an_gal_total <2000,commname,""))
+modelData$efficiency <- with(modelDataPlot,ifelse(FishSumEdible1000>1.3 & an_gal_total <2000,"efficient",""))
+modelData$total <- modelData$FishSumEdible1000 *1000 + modelDataPlot$LargeGameSumEdible1000 *1000
+modelData$lbsGal <- modelData$total/modelData$an_gal_total
+
+
+#cross tab by community
+commSummary <- modelData%>%
+  group_by(commname)%>%
+  summarise(median = median(lbsGal),
+            max = max(lbsGal),
+            min = min(lbsGal))
+ #estimate probability that household is more than average efficient in their community
+modelData2 <- modelData%>%
+  left_join(commSummary,by="commname")
+modelData2$eff2 <- with(modelData2, ifelse(lbsGal>=median,"higher_than_community_median","lower_than_community_median"))
+
+#sorting and labeling super households
+sortData2 <- modelData2[with(modelData2, order(commname, total)),]
+sortData3 <-sortData2 %>% 
+  group_by(commname) %>% 
+  mutate(id = row_number(),
+         idMax = max(id),
+         idPerc = id/idMax*100,
+         cumWeight = cumsum(total),
+         cumWeightMax = max(cumsum(total)),
+         cumWeightPerc = cumWeight/cumWeightMax*100)
+sortData3$superhh <- with(sortData3, ifelse(cumWeightPerc>=30,"yes","no"))
+
+sortData3$superhh2 <- with(sortData3, ifelse(total>=quantile(sortData3$total, probs=0.66),"top_tertile",ifelse((total<quantile(sortData3$total, probs=0.66)) & (total>=quantile(sortData3$total, probs=0.33)), "middle_tertile", "lowest_tertile")))
+
+
+#Probability that super household is also more efficient than community average
+effSummary <- sortData3%>%
+  group_by(eff2,superhh2)%>%
+  summarise(count = n())%>%
+  spread(superhh2, count)
+
+library(tidyverse)
+effSummary2 <- column_to_rownames(effSummary, var="eff2")
+#effSummary2 <- t(effSummary2) #transposing columns to rows and vice versa
+
+effSummary3 <-  effSummary2%>%
+    mutate(
+        lowest.PCT = round(lowest_tertile/sum(lowest_tertile), 3),
+        middle.PCT = round(middle_tertile/sum(middle_tertile), 3),
+        top.PCT = round(top_tertile/sum(top_tertile), 3))
+rownames(effSummary3) <- c("higher_than_community_median","lower_than_community_median")
+
+
+#for Tok solely
+effSummaryTok <- sortData3[with(sortData3, commname=="Tok"),]%>%
+  group_by(eff2,superhh2)%>%
+  summarise(count = n())%>%
+  spread(superhh2, count)
+
+effSummaryTok <- column_to_rownames(effSummaryTok, var="eff2")%>%
+  mutate(
+        lowest.PCT = round(lowest_tertile/sum(lowest_tertile), 3),
+        middle.PCT = round(middle_tertile/sum(middle_tertile), 3),
+        top.PCT = round(top_tertile/sum(top_tertile), 3))
+rownames(effSummaryTok) <- c("higher_than_community_median","lower_than_community_median")
+```
+
+##Looking for evidence of Wolfe's 30/70 rule
+```{r}
+#plotting communities with less than 5 data points
+library(RColorBrewer)
+p <- ggplot(data = sortData3[sortData3$idMax >5,], aes(x=idPerc, y=cumWeightPerc, color=eff2, shape=commname)) +
+   geom_point()+
+   geom_abline(slope=1, linetype="dashed", color = "black", alpha=0.5) +
+   scale_x_continuous(name="Percent of community households", limits=c(0, 100), breaks=c(10,30,50,70,90)) +
+   scale_y_continuous(name="Percent of community harvest", limits=c(0, 100), breaks=c(10,30,50,70,90)) +
+   theme(axis.text=element_text(size=7),axis.title=element_text(size=7),legend.position=c(0.2, 0.8)) +
+   labs(color="Energy efficiency of harvesting",shape="Community")+
+    scale_color_grey()
+   #geom_path(size=0.5, linetype=3)
+p 
+
+p2 <- ggplot(data = sortData3[sortData3$idMax >5,], aes(x=idPerc, y=cumWeightPerc, color=superhh2, shape=commname)) +
+   geom_point()+
+    #geom_path(size=0.5, linetype=3) +
+  geom_abline(slope=1, linetype="dashed", color = "black", alpha=0.5) +
+   scale_x_continuous(name="Percent of community households", limits=c(0, 100), breaks=c(10,30,50,70,90)) +
+   scale_y_continuous(name="Percent of community harvest", limits=c(0, 100), breaks=c(10,30,50,70,90)) +
+   theme(axis.text=element_text(size=7),axis.title=element_text(size=7),legend.position=c(0.2, 0.8)) +
+   labs(color="Harvest amount (lbs) tertile",shape="Community")
+p2 
+
+theme_set(theme_cowplot(font_size=7))
+plot_grid(p, p2, labels = c("A", "B"), ncol = 2)
+ggsave("Harvest_and_efficiency.bmp", plot = last_plot(), device = "bmp", path = NULL,
+  scale = 1, width = 190, height = 90, units = "mm",
+  dpi = 300, limitsize = TRUE)
+```
+
+
 
 #prior summary providing a concise summary of the priors used
 ```{r}
@@ -412,29 +519,24 @@ a_df_exp2$commname <- gsub('.$', '', a_df_exp2$commname)
 a_df_exp2$commname <- factor(a_df_exp2$commname, levels = a_df_exp2$commname[order(a_df_exp2$a_mean)])
 
 # Plot community-level beta zero's posterior mean and 95% credible interval
-ggplot(data = a_df_exp2, 
-       aes(x = commname, 
-           y = a_mean)) +
-  geom_pointrange(aes(ymin = Q2.5, 
-                      ymax = Q97.5),
-                  position = position_jitter(width = 0.1, 
-                                             height = 0)) + 
-  geom_hline(yintercept = mean(a_df_exp2$a_mean), 
-             size = 0.5, 
-             col = "red") + 
-    scale_y_continuous(expression(paste("exp(varying intercept), ", beta["0j"]))) + 
-  theme(axis.text.x = element_text(angle = 45, vjust=0.5, size=7), axis.title.x=element_blank(), axis.text.y = element_text(size=7), axis.title.y = element_text(size=7))
+beta_zeros <- ggplot(a_df_exp2, aes(x = commname, y = a_mean))+
+  geom_pointrange(aes(ymin = Q2.5, ymax = Q97.5)) + 
+  geom_hline(yintercept = mean(a_df_exp2$a_mean), size = 0.5,col = "red") + 
+  scale_y_continuous(expression(paste("gallons, ", beta["0j"]))) + 
+  theme(axis.text.x = element_text(angle = 45, vjust=0.5, size=7), axis.title.x=element_blank(), axis.text.y = element_text(size=7), axis.title.y = element_text(size=7) )
+beta_zeros
+          
 ```
 
 
 #Interpretation of model summary output for household-level coefficients
-Since only the response variable was log-transformed, we can exponentiate each  coefficient subtract 1 and multiply by 100 to get the response of every one-unit increase in the independent variable. 
+Since only the response variable was log-transformed, we can exponentiate each  coefficient subtract 1 and multiply by 100 to get the response of every one-unit increase in the independent variable. https://data.library.virginia.edu/interpreting-log-transformations-in-a-linear-model/
 ```{r}
 Mglm1_df <- as.data.frame(summary(Mglm1))
 #change columnnames for better reference below
 Mglm1_df2 <- Mglm1_df%>%
   tibble::rownames_to_column('variable') #this keeps rownames preserved in code thereafter
-colnames(Mglm1_df2) <- c("variable", "mean",  "mcse",  "sd",    "Q2.5",  "Q25",   "Q50",   "Q75",   "Q97.5", "n_eff", "Rhat" ) 
+colnames(Mglm1_df2) <- c("variable", "mean",  "mcse",  "sd",    "Q2.5",  "Q25",   "Q50",   "Q75",   "Q97.5", "n_eff", "Rhat")
 
 #expoentiate for better interpretation of the coefficients
 Mglm1_df2 <- Mglm1_df2%>%
@@ -445,21 +547,60 @@ Mglm1_df2 <- Mglm1_df2%>%
 keep <- c("FishSumEdible1000","LargeGameSumEdible1000","atvs","sms","boats","cars") 
 Mglm1_df3 <- Mglm1_df2%>%
   filter(variable %in% keep)
+
 ```
 
-#Plot
+#Ploting betas and combining with beta zeros from above
 ```{r}
 #specify order for ggplot to recognize
 Mglm1_df3$variable <- factor(Mglm1_df3$variable, levels = Mglm1_df3$variable[order(Mglm1_df3$mean_exp)])
 # Plot community-level beta zero's posterior mean and 95% credible interval
-ggplot(data = Mglm1_df3, 
+betas <- ggplot(data = Mglm1_df3, 
        aes(x = variable, 
            y = mean_exp)) +
   geom_pointrange(aes(ymin = Q2.5_exp, 
-                      ymax = Q97.5_exp),
-                  position = position_jitter(width = 0.1, 
-                                             height = 0)) + 
-  scale_y_continuous(expression(paste("% change in gasoline consumption / hh"," ,", beta[]))) + 
+                      ymax = Q97.5_exp)) + 
+  scale_y_continuous(expression(paste("% change," , beta[]))) + 
   theme(axis.text.x = element_text(angle = 45, vjust=0.5, size=7), axis.title.x=element_blank(), axis.text.y = element_text(size=7), axis.title.y = element_text(size=7))+
   scale_x_discrete(labels = c("Fish harvest 1000lbs", "Game harvest 1000lbs","Snowmobiles","Boats","ATVs", "Cars & trucks"))
+betas
+
+library(cowplot)
+theme_set(theme_cowplot(font_size=7))
+plot_grid(beta_zeros, betas, labels = c("A", "B"), ncol = 2, align = "h", axis = "bt", rel_widths = c(1.5, 1) )
+
+ggsave("betas.bmp", plot = last_plot(), device = "bmp", path = NULL,
+  scale = 1, width = 140, height = 90, units = "mm",
+  dpi = 300, limitsize = TRUE)
+```
+
+
+
+PARKING LOT
+```{r}
+GamePlot <- ggplot() +
+ geom_point(data = sortData3[sortData3$idMax >5,], aes(x=LargeGameSumEdible1000, y=an_gal_total, color=commname))+
+  geom_text(hjust=1.01, vjust=.1, size=3) +
+  xlab("Large game harvest, 1000s of lbs")+
+  ylab("gallons")+
+    scale_x_continuous(limits = c(0, 8)) +
+    jitter()+
+theme(axis.text=element_text(size=7),axis.title=element_text(size=7),legend.position="none")
+GamePlot
+
+FishPlot <- ggplot() +
+ geom_point(data = sortData3[sortData3$idMax >5,], aes(x=FishSumEdible1000, y=an_gal_total, color=commname))+
+  geom_text(hjust=1.01, vjust=.1, size=3) +
+  xlab("Fish harvest, 1000s of lbs")+
+  ylab("gallons")+
+  geom_jitter() +
+  scale_x_continuous(limits = c(0, 8)) +
+theme(axis.text=element_text(size=7),axis.title=element_text(size=7),legend.position=c(0.8, 0.8),legend.title = element_blank())
+FishPlot
+
+theme_set(theme_cowplot(font_size=7))
+plot_grid(GamePlot, FishPlot, labels = c("A", "B"), ncol = 2)
+ggsave("Harvest_fig2.bmp", plot = last_plot(), device = "bmp", path = NULL,
+  scale = 1, width = 190, height = 90, units = "mm",
+  dpi = 300, limitsize = TRUE)
 ```
