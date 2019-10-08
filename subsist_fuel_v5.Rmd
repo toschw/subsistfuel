@@ -23,6 +23,7 @@ library(cowplot)
 #data <- read.csv("C:/Users/Toby/Dropbox/DATA/Dropbox/DATA/2011_Schwoerer_subsistence_fuel_survey/Subset4R.csv",stringsAsFactor=FALSE)
 data <- read.csv("D:/Dropbox/DATA/2011_Schwoerer_subsistence_fuel_survey/Subset4R.csv",stringsAsFactor=FALSE)
 incdata <- read.csv("D:/Dropbox/DATA/2011_Schwoerer_subsistence_fuel_survey/subdataamblerprojfinal.csv",stringsAsFactor=FALSE)
+road_comm <- read.csv("D:/Dropbox/DATA/2011_Schwoerer_subsistence_fuel_survey/road_comm.csv",stringsAsFactor=FALSE)
 
 #Creating consistent ID for other dataset
 incdata$ID <- paste(incdata$commname,incdata$hhid, sep="_")
@@ -109,6 +110,10 @@ keep <- c("an_gal_total", "gal_log", "FishSumEdible1000", "LargeGameSumEdible100
 modelData <- hh_data3[keep]
 modelData <- modelData%>%
   na.omit()
+
+#adding road connection dummy variable
+modelData$road <- with(modelData,ifelse(commname=="Alatna"|commname=="Allakaket"|commname=="Beaver"|commname=="Anaktuvuk Pass",1,0))
+
 ```
 
 #Community characteristics
@@ -132,10 +137,10 @@ summary <- modelData%>%
 #labeling efficient households
 #modelDataPlot <- modelData
 #modelDataPlot$GameLabel <- with(modelDataPlot,ifelse(LargeGameSumEdible1000>3,commname,""))
-modelData$efficiency <- with(modelDataPlot,ifelse(LargeGameSumEdible1000>3,"efficient",""))
+modelData$efficiency <- with(modelData,ifelse(LargeGameSumEdible1000>3,"efficient",""))
 #modelDataPlot$FishLabel <- with(modelDataPlot,ifelse(FishSumEdible1000>1.3 & an_gal_total <2000,commname,""))
-modelData$efficiency <- with(modelDataPlot,ifelse(FishSumEdible1000>1.3 & an_gal_total <2000,"efficient",""))
-modelData$total <- modelData$FishSumEdible1000 *1000 + modelDataPlot$LargeGameSumEdible1000 *1000
+modelData$efficiency <- with(modelData,ifelse(FishSumEdible1000>1.3 & an_gal_total <2000,"efficient",""))
+modelData$total <- modelData$FishSumEdible1000 *1000 + modelData$LargeGameSumEdible1000 *1000
 modelData$lbsGal <- modelData$total/modelData$an_gal_total
 
 
@@ -144,7 +149,10 @@ commSummary <- modelData%>%
   group_by(commname)%>%
   summarise(median = median(lbsGal),
             max = max(lbsGal),
-            min = min(lbsGal))
+            min = min(lbsGal),
+            sd = sd(lbsGal),
+            mean = mean(lbsGal),
+            cv = sd/mean)
  #estimate probability that household is more than average efficient in their community
 modelData2 <- modelData%>%
   left_join(commSummary,by="commname")
@@ -166,35 +174,44 @@ sortData3$superhh2 <- with(sortData3, ifelse(total>=quantile(sortData3$total, pr
 
 
 #Probability that super household is also more efficient than community average
-effSummary <- sortData3%>%
-  group_by(eff2,superhh2)%>%
+effSummary <- sortData3[sortData3$idMax >5,]%>%  #use this if wanting to limit to four communities with sufficient housholds
+#effSummary <- sortData3%>%
+  group_by(commname,eff2,superhh2)%>%
   summarise(count = n())%>%
   spread(superhh2, count)
+effSummary[is.na(effSummary)] <- 0
 
 library(tidyverse)
 effSummary2 <- column_to_rownames(effSummary, var="eff2")
 #effSummary2 <- t(effSummary2) #transposing columns to rows and vice versa
 
-effSummary3 <-  effSummary2%>%
-    mutate(
-        lowest.PCT = round(lowest_tertile/sum(lowest_tertile), 3),
-        middle.PCT = round(middle_tertile/sum(middle_tertile), 3),
-        top.PCT = round(top_tertile/sum(top_tertile), 3))
-rownames(effSummary3) <- c("higher_than_community_median","lower_than_community_median")
-
-
-#for Tok solely
-effSummaryTok <- sortData3[with(sortData3, commname=="Tok"),]%>%
-  group_by(eff2,superhh2)%>%
-  summarise(count = n())%>%
-  spread(superhh2, count)
-
-effSummaryTok <- column_to_rownames(effSummaryTok, var="eff2")%>%
+effSummary3 <-  effSummary%>%
+  group_by(commname)%>%
   mutate(
-        lowest.PCT = round(lowest_tertile/sum(lowest_tertile), 3),
-        middle.PCT = round(middle_tertile/sum(middle_tertile), 3),
-        top.PCT = round(top_tertile/sum(top_tertile), 3))
-rownames(effSummaryTok) <- c("higher_than_community_median","lower_than_community_median")
+        lowest = round(lowest_tertile/sum(lowest_tertile),1),
+        middle = round(middle_tertile/sum(middle_tertile), 1),
+        top = round(top_tertile/sum(top_tertile), 1))
+
+plotData <- effSummary3%>%
+  filter(eff2=="higher_than_community_median")%>%
+  gather(tertile, probability, lowest, middle, top)
+
+d=data.frame(a=c())
+library(ggplot2)
+plot3 <- ggplot(plotData, aes(x=commname, y=probability, color=tertile, shape=commname)) +
+ scale_color_brewer(type='div', palette=2)+
+   #scale_shape_manual() + #values=c(21, 22, 23, 24))+
+  geom_jitter(position = position_jitter(0.1), size=5)+
+  theme(axis.text=element_text(family="sans",size=7),axis.title=element_text(family="sans",size=7)) +
+  ylab("Probability")+ xlab("") +
+ labs(color="Harvest tertile") +
+ theme(axis.text=element_text(size=7),axis.title=element_text(size=7), legend.position=c(0.85, 0.2),legend.text=element_text(family="sans", size=7),legend.title=element_text(family="sans", size=7)) +
+  guides(shape=FALSE, color=guide_legend(reverse = TRUE))#this eliminates the commname variable from having a legend
+plot3
+
+ggsave("efficiency_probability.bmp", plot = last_plot(), device = "bmp", path = NULL,
+  scale = 1, width = 90, height = 90, units = "mm",
+  dpi = 300, limitsize = TRUE)
 ```
 
 ##Looking for evidence of Wolfe's 30/70 rule
@@ -216,11 +233,13 @@ p2 <- ggplot(data = sortData3[sortData3$idMax >5,], aes(x=idPerc, y=cumWeightPer
    geom_point()+
     #geom_path(size=0.5, linetype=3) +
   geom_abline(slope=1, linetype="dashed", color = "black", alpha=0.5) +
+  scale_color_brewer()+
    scale_x_continuous(name="Percent of community households", limits=c(0, 100), breaks=c(10,30,50,70,90)) +
    scale_y_continuous(name="Percent of community harvest", limits=c(0, 100), breaks=c(10,30,50,70,90)) +
    theme(axis.text=element_text(size=7),axis.title=element_text(size=7),legend.position=c(0.2, 0.8)) +
    labs(color="Harvest amount (lbs) tertile",shape="Community")
 p2 
+
 
 theme_set(theme_cowplot(font_size=7))
 plot_grid(p, p2, labels = c("A", "B"), ncol = 2)
@@ -279,15 +298,19 @@ Bayesian estimation can help in this case:
 ### HB models
 ```{r}
 #Model HB1
-Mglm1 <- stan_glmer(gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   + atvs + sms + boats + cars +  (1 | commname), data = modelData, family = gaussian(link = "identity"), prior = normal(location=0,scale=10,autoscale=F),prior_intercept = normal(location=0,scale=10,autoscale=F), prior_aux = exponential(rate=1))
+Mglm1 <- stan_glmer(gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   + atvs + sms + boats + cars + (1 | commname), data = modelData, family = gaussian(link = "identity"), prior = normal(location=0,scale=10,autoscale=F),prior_intercept = normal(location=0,scale=10,autoscale=F), prior_aux = exponential(rate=1))
 
 Mglm2 <- stan_glmer(gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   + atvs + sms + boats + cars + HHSIZE +  (1 | commname), data = modelData, family = gaussian(link = "identity"), prior = normal(location=0,scale=10,autoscale=F),prior_intercept = normal(location=0,scale=10,autoscale=F), prior_aux = exponential(rate=1), adapt_delta =0.99)
 
 Mglm3 <- stan_glmer(gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   + atvs + sms + boats + cars + HHSIZE + hhincadj_log +  (1 | commname), data = modelData, family = gaussian(link = "identity"),prior = normal(location=0,scale=10,autoscale=F),prior_intercept = normal(location=0,scale=10,autoscale=F), prior_aux = exponential(rate=1), adapt_delta = 0.99)
 ```
 
-#Quick model check
+
+
+
+#Quick model check for test model
 ```{r}
+
 prior_summary(object = Mglm1)
 Mglm1
 summary(Mglm1)
