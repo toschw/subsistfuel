@@ -1,15 +1,15 @@
 ---
-title: "Subsistence fuel analysis"
+title: "Predicting the food-energy nexus of wild food systems"
 author: "Tobias Schwoerer"
-date: "June 5 2019"
+date: "November 5 2019"
 output: html_document
 editor_options: 
   chunk_output_type: console
 ---
 
-#Data import
-What probability distribution best fits the data?
+#Data import, preparation and setting global theme for figures
 ```{r}
+#loading libraries
 library(dplyr)
 library(tidyr)
 library(MASS)
@@ -18,106 +18,36 @@ library(rstanarm)
 library(ggplot2)
 library(car)
 library(cowplot)
+library(tidyverse)
+library(RColorBrewer)
+library(bayesplot)
+library(rstan)
+library(car)
 
+#Setting global theme for figures
 theme_set(theme_classic(base_size = 9))
 
-#data <- read.csv("C:/Users/Toby/Dropbox/DATA/Dropbox/DATA/2011_Schwoerer_subsistence_fuel_survey/Subset4R.csv",stringsAsFactor=FALSE)
-data <- read.csv("D:/Dropbox/DATA/2011_Schwoerer_subsistence_fuel_survey/Subset4R.csv",stringsAsFactor=FALSE)
-incdata <- read.csv("D:/Dropbox/DATA/2011_Schwoerer_subsistence_fuel_survey/subdataamblerprojfinal.csv",stringsAsFactor=FALSE)
-
-#Creating consistent ID for other dataset
-incdata$ID <- paste(incdata$commname,incdata$hhid, sep="_")
-#adding hh size and income to my data
-myvars <- c("ID", "hhincadj", "HHSIZE")
-newdata <- incdata[myvars]
-
-#adding newdata to data
-data <- data%>%
-  inner_join(newdata, by="ID")
-
-#eliminating missing data, equipment not used, chainsaws, and generators
-data2 <- subset(data, !is.na(an_gal))
-data2 <- subset(data2, used=="Used this equipment")
-
-data2 <- data2%>%
-  filter(resname!="Chainsaw" & resname!="Generator")
-
-#grouping data: each row = one distinct household
-hh_data <- data2%>%
-  group_by(ID)%>%
-  mutate(an_gal_total=sum(an_gal),
-         usenum_total=sum(usenum),
-         sms = sum(sm),
-         atvs = sum(atv),
-         cars =sum(car),
-         boats = sum(boat))%>%
-  subset(!is.na(price), select=-c(an_gal, survey_id, UniqueID, resname, fuel, saw, sm, atv, car, boat, vehicles, usenum))%>%
-  distinct(ID, .keep_all = TRUE)
-
-#eliminating records that are below 1gal in gasoline consumption. 
-hh_data2 <- hh_data%>%
-  subset(an_gal_total>1)
-
-#check whether outcome variable is normally or log-normally distributed
-Aplot <- car::qqPlot(hh_data2$an_gal_total, xlab="normal quantiles", ylab="gasoline consumption", envelope=0.95, id=FALSE)
-Bplot <- car::qqPlot(hh_data2$an_gal_total, "lnorm", xlab="log-normal quantiles", ylab="gasoline consumption", envelope=0.95, id=FALSE)
+#Importing data archived at http://doi.org/10.5063/F1PK0DGR
+modelData <- read.csv("https://knb.ecoinformatics.org/knb/d1/mn/v2/object/urn%3Auuid%3Aec1bb1ef-6aee-42a6-9d2f-ee4f9fda7851")
 ```
 
-Result: 
-an_gal_total (annual gasoline consumption in gallons per household) is log-normally distributed, need to transform (https://github.com/stan-dev/rstanarm/issues/115). Data such as the gasoline consumption are often naturally log-normally distributed:  values are often low, but are occasionally high or very high (https://rcompanion.org/handbook/I_12.html)
-
-##Transformations
+#Fig A.1
+Checking normality assumption of the outcome variable
 ```{r}
-#log-transforming an_gal_total
-hh_data2$gal_log <- log(hh_data2$an_gal_total)
-
-#Checking normal distribution fit
-Dplot <- car::qqPlot(hh_data2$gal_log, "norm", xlab="normal quantiles", ylab="log(gasoline consumption)",envelope=0.95, id=FALSE)
-
-#log-transforming income variable
-hh_data2$hhincadj_log <-ifelse(hh_data2$hhincadj==0,0,log(hh_data2$hhincadj))
+Aplot <- car::qqPlot(modelData$an_gal_total, xlab="normal quantiles", ylab="gasoline consumption", envelope=0.95, id=FALSE)
+Bplot <- car::qqPlot(modelData$an_gal_total, "lnorm", xlab="log-normal quantiles", ylab="gasoline consumption", envelope=0.95, id=FALSE)
+Cplot <- car::qqPlot(modelData$gal_log, "norm", xlab="normal quantiles", ylab="log(gasoline consumption)",envelope=0.95, id=FALSE)
 ```
 
-
-###Preparing data for model
-```{r}
-#rescaling weight data into 1000s of lbs, 
-hh_data3 <- hh_data2%>%
-  mutate(FishSumEdible1000 = FishSumEdible/1000,
-         LargeGameSumEdible1000 = LargeGameSumEdible/1000)
-
-#dropping other price columns and eliminating variables we don't need
-keep <- c("an_gal_total", "gal_log", "FishSumEdible1000", "LargeGameSumEdible1000", "atvs", "sms", "boats", "cars", "commname","HHSIZE","hhincadj_log")
-modelData <- hh_data3[keep]
-modelData <- modelData%>%
-  na.omit()
-```
-
-#preparing modelData for archiving
-```{r}
-keepArchive <- c("an_gal_total","gal_log", "FishSumEdible1000", "LargeGameSumEdible1000", "atvs", "sms", "boats", "cars", "commname")
-archiveData <- hh_data3[keepArchive]
-commIDset <- read.csv("D:/Dropbox/DATA/2011_Schwoerer_subsistence_fuel_survey/commID.csv",stringsAsFactor=FALSE)
-archiveData <- archiveData%>%
-  left_join(commIDset, by="commname")%>%
-    na.omit()
-archiveData <- archiveData[,-9]
-colnames(archiveData)[colnames(archiveData)=="commID"] <- "commname"
-write.csv(archiveData,"D:/Dropbox/DATA/2011_Schwoerer_subsistence_fuel_survey/archiveData.csv")
-```
-
-#Community characteristics
+#Table 3 Household characteristics
 ```{r}
 modelData$total <- modelData$LargeGameSumEdible1000+modelData$FishSumEdible1000
 summary <- modelData%>%
-   mutate(hhincadj=exp(hhincadj_log))%>%
   group_by(commname)%>%
   summarise(ATV = mean(atvs),
             SN = mean(sms),
             CAR = mean(cars),
             BOAT = mean(boats),
-            HH = median(HHSIZE),
-            income = median(hhincadj),
             gal = median(an_gal_total),
             fish = median(FishSumEdible1000)*1000,
             game = median(LargeGameSumEdible1000)*1000,
@@ -125,18 +55,13 @@ summary <- modelData%>%
             sample_size = n())
 ```
 
-##Harvest weights and gasoline consumption plotted
+#Analysis related to harvest efficiency
 ```{r}
-
-#labeling efficient households
-#modelDataPlot <- modelData
-#modelDataPlot$GameLabel <- with(modelDataPlot,ifelse(LargeGameSumEdible1000>3,commname,""))
+#Harvest efficiency calculations
 modelData$efficiency <- with(modelData,ifelse(LargeGameSumEdible1000>3,"efficient",""))
-#modelDataPlot$FishLabel <- with(modelDataPlot,ifelse(FishSumEdible1000>1.3 & an_gal_total <2000,commname,""))
 modelData$efficiency <- with(modelData,ifelse(FishSumEdible1000>1.3 & an_gal_total <2000,"efficient",""))
 modelData$total <- modelData$FishSumEdible1000 *1000 + modelData$LargeGameSumEdible1000 *1000
 modelData$lbsGal <- modelData$total/modelData$an_gal_total
-
 
 #cross tab by community
 commSummary <- modelData%>%
@@ -147,7 +72,8 @@ commSummary <- modelData%>%
             sd = sd(lbsGal),
             mean = mean(lbsGal),
             cv = sd/mean)
- #estimate probability that household is more than average efficient in their community
+
+#estimate probability that household is more than average efficient in their community
 modelData2 <- modelData%>%
   left_join(commSummary,by="commname")
 modelData2$eff2 <- with(modelData2, ifelse(lbsGal>=median,"higher_than_community_median","lower_than_community_median"))
@@ -166,18 +92,13 @@ sortData3$superhh <- with(sortData3, ifelse(cumWeightPerc>=30,"yes","no"))
 
 sortData3$superhh2 <- with(sortData3, ifelse(total>=quantile(sortData3$total, probs=0.66),"top_tertile",ifelse((total<quantile(sortData3$total, probs=0.66)) & (total>=quantile(sortData3$total, probs=0.33)), "middle_tertile", "lowest_tertile")))
 
-
-#Probability that super household is also more efficient than community average
+#Figure Probability that super household is also more efficient than community average
 effSummary <- sortData3[sortData3$idMax >5,]%>%  #use this if wanting to limit to four communities with sufficient housholds
 #effSummary <- sortData3%>%
   group_by(commname,eff2,superhh2)%>%
   summarise(count = n())%>%
   spread(superhh2, count)
 effSummary[is.na(effSummary)] <- 0
-
-library(tidyverse)
-effSummary2 <- column_to_rownames(effSummary, var="eff2")
-#effSummary2 <- t(effSummary2) #transposing columns to rows and vice versa
 
 effSummary3 <-  effSummary%>%
   group_by(commname)%>%
@@ -189,11 +110,11 @@ effSummary3 <-  effSummary%>%
 plotData <- effSummary3%>%
   filter(eff2=="higher_than_community_median")%>%
   gather(tertile, probability, lowest, middle, top)
+```
 
-d=data.frame(a=c())
-
-library(ggplot2)
-plot3 <- ggplot(plotData, aes(x=commname, y=probability, color=tertile, shape=commname, stroke=1)) +
+#Figure 3
+```{r}
+Fig3 <- ggplot(plotData, aes(x=commname, y=probability, color=tertile, shape=commname, stroke=1)) +
  scale_shape_manual(values=c(15,17,7,18))+
   scale_color_manual(values = c("#cccccc", "#636363", "#252525"))+
   #scale_colour_brewer(palette = "Set2")+
@@ -204,19 +125,14 @@ plot3 <- ggplot(plotData, aes(x=commname, y=probability, color=tertile, shape=co
  labs(color="Harvest tertile") +
  theme(axis.text.x=element_text(angle = 90, vjust=0.5, size=9),axis.title=element_text(size=9), legend.position=c(0.85, 0.22),legend.text=element_text(family="sans", size=7),legend.title=element_text(family="sans", size=7)) +
   guides(shape=FALSE, color=guide_legend(reverse = TRUE))#this eliminates the commname variable from having a legend
-plot3
-
-ggsave("Figures/efficiency_probability.bmp", plot = last_plot(), device = "bmp", path = NULL,
-  scale = 1, width = 90, height = 90, units = "mm",
-  dpi = 300, limitsize = TRUE)
+Fig3
 ```
 
-##Looking for evidence of Wolfe's 30/70 rule
+# Figure 2
+Looking for evidence of Wolfe's 30/70 rule
 ```{r}
 #plotting communities with more than 5 data points
-library(RColorBrewer)
-usr <- par('usr')
-p <- ggplot(data = sortData3[sortData3$idMax >5,], aes(x=idPerc, y=cumWeightPerc, color=eff2, shape=commname, stroke=1)) +
+Fig2 <- ggplot(data = sortData3[sortData3$idMax >5,], aes(x=idPerc, y=cumWeightPerc, color=eff2, shape=commname, stroke=1)) +
    scale_shape_manual(values=c(15,17,7,18)) + 
    
   geom_point(size=2)+
@@ -227,40 +143,21 @@ p <- ggplot(data = sortData3[sortData3$idMax >5,], aes(x=idPerc, y=cumWeightPerc
    labs(color="Energy efficiency of harvesting",shape="Community")+
   scale_color_manual(labels = c("higher than community median", "lower than community median"), values = c("black", "grey")) +
   theme_classic() 
-p + geom_segment(aes(x = 70, y = 0, xend = 70, yend = 70))
-
-ggsave("Figures/Fig2.bmp", plot = last_plot(), device = "bmp", path = NULL,
-  scale = 1, width = 140, height = 90, units = "mm",
-  dpi = 300, limitsize = TRUE)
+Fig2 + geom_segment(aes(x = 70, y = 0, xend = 70, yend = 70))
 ```
 
-###Testing for homogeneity between communities, which exists if the p-value of the test is less than the significance level of 0.05. 
-In order to get valid parameter estimates, we need more or less a homogeneous response variable across groups (communities). See: Gabry and Goodrich 2018: https://cran.r-project.org/web/packages/rstanarm/vignettes/glmer.html  "An analysis that disregards between-group heterogeneity can yield parameter estimates that are wrong if there is between-group heterogeneity but would be relatively precise if there actually were no between-group heterogeneity."
-
-Since the log-transformed data is not exactly normally distributed, we use the Levene test as a more robust alternative to test for the above. 
-
-H0: the group variances are equal (called homogeneity of variance or homoscedasticity)
-If the resulting p-value of Levene's test is less than some significance level (typically 0.05), the obtained differences in sample variances are unlikely to have occurred based on random sampling from a population with equal variances. Thus, the null hypothesis of equal variances is rejected and it is concluded that there is a difference between the variances in the population. In other words, there is heteroscedasticity. 
+#Homogeneity test
 ```{r}
-library(car)
 #Bartlett's test 
 bartlett.test(gal_log ~ commname, data = modelData)
 # Levene's test with one independent variable. The Levene test, is a more robust alternative to the Bartlett test when the distributions of the data are non-normal.
 leveneTest(gal_log ~ commname, data = modelData)
-
 fligner.test(gal_log ~ commname, data = modelData)
 ```
-Result:
-In both tests, the H0 is rejected, heterogeneous variances exists between communities. Concluding our estimators are biased. 
-
-Bayesian estimation can help in this case:
-"Group-by-group analyses, on the other hand, are valid but produces estimates that are relatively imprecise. While complete pooling or no pooling of data across groups is sometimes called for, models that ignore the grouping structures in the data tend to underfit or overfit (Gelman et al.,2013). Hierarchical modeling provides a compromise by allowing parameters to vary by group at lower levels of the hierarchy while estimating common parameters at higher levels. Inference for each group-level parameter is informed not only by the group-specific information contained in the data but also by the data for other groups as well. This is commonly referred to as borrowing strength or shrinkage." (Gabry and Goodrich 2018)
 
 #Model estimation
 ##Bayesian Generalized Linear Models With Group-Specific Terms Via Stan
 Fitting a lognormal data model using the log-transformed outcome variable, gal_log. 
-Variables that ended up close to zero and not adding any predictive power were: OtherSumEdible, SmallGameSumEdible, VegetationSumEdible, and LargeGameSumDist. 
-### HB models
 ```{r}
 #Model HB1
 Mglm1 <- stan_glmer(gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   + atvs + sms + boats + cars + (1 | commname), data = modelData, family = gaussian(link = "identity"), prior = normal(location=0,scale=10,autoscale=F),prior_intercept = normal(location=0,scale=10,autoscale=F), prior_aux = exponential(rate=1))
@@ -270,7 +167,7 @@ Mglm2 <- stan_glmer(gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   +
 Mglm3 <- stan_glmer(gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   + atvs + sms + boats + cars + HHSIZE + hhincadj_log +  (1 | commname), data = modelData, family = gaussian(link = "identity"),prior = normal(location=0,scale=10,autoscale=F),prior_intercept = normal(location=0,scale=10,autoscale=F), prior_aux = exponential(rate=1), adapt_delta = 0.99)
 ```
 
-#Quick model check for test model
+###Quick model check for test model
 ```{r}
 prior_summary(object = Mglm1)
 Mglm1
@@ -278,10 +175,8 @@ summary(Mglm1)
 launch_shinystan(Mglm1)
 ```
 
-#Validation 
-We used k=10-fold cross-validation to compare the two models above. 
-Following http://mc-stan.org/rstanarm/reference/loo.stanreg.html#k-fold-cv
-Results will be ordered by expected predictive accuracy. 
+###Cross-validation 
+We used k=10-fold cross-validation to compare models above. 
 ```{r}
 kfoldHB1 <- kfold(Mglm1, K=10)
 kfoldHB2 <- kfold(Mglm2, K=10)
@@ -289,34 +184,16 @@ kfoldHB3 <- kfold(Mglm3, K=10)
 compare_models(kfoldHB1, kfoldHB2, kfoldHB3,detail=TRUE)
 ```
 
-Model formulas: 
- Mglm1:  gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000 + atvs + 
-	   sms + boats + cars + (1 | commname)
- Mglm2:  gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000 + atvs + 
-	   sms + boats + cars + HHSIZE + (1 | commname)
- Mglm3:  gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000 + atvs + 
-	   sms + boats + cars + HHSIZE + hhincadj_log + (1 | commname)      elpd_diff se_diff
-Mglm1  0.0       0.0   
-Mglm2 -1.1       2.6   
-Mglm3 -1.4       2.4
-
-#Diagnostics for Model1
+###Model diagnostic plots
+####Convergence 
 ```{r}
 #Evaluating model convergence and diagnose model through STAN online portal
 rhat_fig <- plot(Mglm1, "rhat")
-ggsave("Figures/rhat_fig.bmp", plot = last_plot(), device = "bmp", path = NULL,
-  scale = 1, width = 90, height = 90, units = "mm",
-  dpi = 300, limitsize = TRUE)
 ess_fig <- plot(Mglm1, "ess")
-ggsave("Figures/ess_fig.bmp", plot = last_plot(), device = "bmp", path = NULL,
-  scale = 1, width = 90, height = 90, units = "mm",
-  dpi = 300, limitsize = TRUE)
 ```
 
-##Predictive checks
+####Distributions related to test statistics
 ```{r}
-library(bayesplot)
-library(rstan)
 if (!require("devtools")) {
   install.packages("devtools")
 }
@@ -342,18 +219,12 @@ Tmax <- Mglm1 %>%
   ppc_stat(y = Mglm2$y,
              stat = "max")
 #combining plots
-library(cowplot)
 theme_set(theme_cowplot(font_size=7))
 plot_grid(Tmean, Tsd, Tmin, Tmax, labels = c("A", "B", "C", "D"), ncol = 2)
-ggsave("Figures/yyrepGrid_fig.bmp", plot = last_plot(), device = "bmp", path = NULL,
-  scale = 1, width = 140, height = 140, units = "mm",
-  dpi = 300, limitsize = TRUE)
 ```
 
 
-##Linear model with the same predictors as the best performing HB model, in this case HB5
-Following https://mc-stan.org/users/documentation/case-studies/tutorial_rstanarm.html#model-3-varying-intercept-and-slope-model-with-a-single-predictor
-we estimate maximum likelihood, not REML = restricted maxim likelihood
+##Maximum likelihood
 ```{r}
 library(lme4)
 Mlinear <- lmer(formula = gal_log ~ 1 + FishSumEdible1000 + LargeGameSumEdible1000   + atvs + sms + boats + cars +   (1 | commname), data = modelData, REML = FALSE)
@@ -365,7 +236,7 @@ linearPredict <- as.data.frame(predict(Mlinear))
 colnames(linearPredict)[1] <- "linearPredict"
 ```
 
-###Comparing PPC with linear model predictions
+#Comparing HB and ML estimates with raw data 
 ```{r}
 library(gginnards)
 library(stringr)
@@ -379,7 +250,7 @@ dataPlot$type <- with(dataPlot, ifelse(str_detect(dataPlot$variable,"V"),"y HB",
 #changing sort order so that lines that should go on top are at the bottom of the dataframe
 dataPlot <- data.table::setorder(data, type)
 
-ppC <- ggplot() + 
+Fig4 <- ggplot() + 
   scale_color_manual(name = "", values=c( "y HB"=  "#cccccc","y ML"=  "#636363","y"="#252525"))+
   geom_line(alpha=1, stat="density", show.legend=TRUE, size=0.75, data = dataPlot[100:4059,], aes(x = value, line=variable, color="y HB"), size = 0.6) +
   geom_line(linetype = "dashed", alpha=1, stat="density", show.legend=TRUE, size=0.75, data = dataPlot[4060:4158,], aes(x = value, line=variable, color="y ML"), size = 0.6) +
@@ -387,14 +258,10 @@ ppC <- ggplot() +
   ylab("Density")+
   xlab("Log(annual gasoline consumption)")+
   theme(legend.position = c(0.87, 0.7))
-ppC
-
-ggsave("Figures/PPC_fig.bmp", plot = last_plot(), device = "bmp", path = NULL,
-  scale = 1, width = 90, height = 90, units = "mm",
-  dpi = 300, limitsize = TRUE)
+Fig4
 ```
 
-##Convergence check
+#Convergence check for preferred HB model
 ```{r}
 #convergence check after warm-up
 color_scheme_set("mix-blue-red")
@@ -402,13 +269,9 @@ con_test_fig <- mcmc_trace(Mglm1, pars = c("FishSumEdible1000", "sigma"),
            facet_args = list(nrow = 2)) +
    ggplot2::theme_update(text = element_text(size=7))  
 con_test_fig
-ggsave("Figures/con_test_fig.bmp", plot = last_plot(), device = "bmp", path = NULL,
-  scale = 1, width = 90, height = 90, units = "mm",
-  dpi = 300, limitsize = TRUE)
 ```
 
-##Posterior distributions for estimators
-not as important as we are not interested in marginal contributions of each variable and rather in the predictive capabilities of the models
+##Posterior predictive distributions against data points by community
 ```{r}
 posterior <- as.matrix(Mglm1)
 
@@ -428,7 +291,7 @@ ggsave("Figures/hh_posterior_fig.bmp", plot = last_plot(), device = "bmp", path 
   dpi = 300, limitsize = TRUE)
 
 #plotting predictive bands alongside the data
-pred_bands <- ggplot(modelData2, aes(y = commname, x = .prediction)) +
+Fig5 <- ggplot(modelData2, aes(y = commname, x = .prediction)) +
   stat_intervalh() +
   geom_point(aes(x = an_gal_total), data = modelData) +
   scale_color_brewer(palette = "Greys")+
@@ -436,10 +299,8 @@ pred_bands <- ggplot(modelData2, aes(y = commname, x = .prediction)) +
   xlab("annual gasoline consumption (gal/household)") + xlim(0,8000) +
   theme(legend.position = c(0.7, 0.9),legend.justification = c(0, 1),legend.text=element_text(size=9),text = element_text(size=9) )+
   labs(color="Percentile of posterior \npredictive distribution")
-pred_bands
-ggsave("Figures/pred_bands_fig.bmp", plot = last_plot(), device = "bmp", path = NULL,
-  scale = 1, width = 140, height = 70, units = "mm",
-  dpi = 300, limitsize = TRUE)
+Fig5
+
 ```
 
 #Comparing communities in their annual gasoline consumption
@@ -496,7 +357,8 @@ a_df_exp2$commname <- sub('.*:', '', a_df_exp2$commname)
 a_df_exp2$commname <- gsub('.$', '', a_df_exp2$commname)
 ```
 
-#Caterpillar plot of community varying intercepts with 95% credible intervals
+#Fig 6A
+Caterpillar plot of community varying intercepts with 95% credible intervals
 ```{r}
 #specify order for ggplot to recognize
 a_df_exp2$commname <- factor(a_df_exp2$commname, levels = a_df_exp2$commname[order(a_df_exp2$a_mean)])
@@ -513,7 +375,8 @@ beta_zeros <- ggplot(a_df_exp2, aes(x = commname, y = a_mean))+
 beta_zeros 
 ```
 
-#Ploting betas and combining with beta zeros from above
+#Fig 6B
+Ploting betas and combining with beta zeros from above
 THIS NOT WORKING PROPERLY!!
 ```{r}
 #specify order for ggplot to recognize
@@ -527,13 +390,9 @@ betas <- ggplot(data = Mglm1_df3, aes(x = variable, y = mean_exp)) +
   scale_x_discrete(labels = c("Fish harvest 1000lbs", "Game harvest 1000lbs","Snowmobiles","Boats","ATVs", "Cars & trucks"))
 betas
 
-library(cowplot)
 theme_set(theme_cowplot(font_size=7))
-plot_grid(beta_zeros, betas, labels = c("A", "B"), ncol = 2, align = "h", axis = "bt", rel_widths = c(1.5, 1) )
-
-ggsave("Figures/betas.bmp", plot = last_plot(), device = "bmp", path = NULL,
-  scale = 1, width = 140, height = 90, units = "mm",
-  dpi = 300, limitsize = TRUE)
+Fig6 <- plot_grid(beta_zeros, betas, labels = c("A", "B"), ncol = 2, align = "h", axis = "bt", rel_widths = c(1.5, 1) )
+Fig6
 ```
 
 #Interpretation of model summary output for household-level coefficients
@@ -554,58 +413,4 @@ Mglm1_df2 <- Mglm1_df2%>%
 keep <- c("FishSumEdible1000","LargeGameSumEdible1000","atvs","sms","boats","cars") 
 Mglm1_df3 <- Mglm1_df2%>%
   filter(variable %in% keep)
-
-```
-
-PARKING LOT
-```{r}
-GamePlot <- ggplot() +
- geom_point(data = sortData3[sortData3$idMax >5,], aes(x=LargeGameSumEdible1000, y=an_gal_total, color=commname))+
-  geom_text(hjust=1.01, vjust=.1, size=3) +
-  xlab("Large game harvest, 1000s of lbs")+
-  ylab("gallons")+
-    scale_x_continuous(limits = c(0, 8)) +
-    jitter()+
-theme(axis.text=element_text(size=7),axis.title=element_text(size=7),legend.position="none")
-GamePlot
-
-FishPlot <- ggplot() +
- geom_point(data = sortData3[sortData3$idMax >5,], aes(x=FishSumEdible1000, y=an_gal_total, color=commname))+
-  geom_text(hjust=1.01, vjust=.1, size=3) +
-  xlab("Fish harvest, 1000s of lbs")+
-  ylab("gallons")+
-  geom_jitter() +
-  scale_x_continuous(limits = c(0, 8)) +
-theme(axis.text=element_text(size=7),axis.title=element_text(size=7),legend.position=c(0.8, 0.8),legend.title = element_blank())
-FishPlot
-
-theme_set(theme_cowplot(font_size=7))
-plot_grid(GamePlot, FishPlot, labels = c("A", "B"), ncol = 2)
-ggsave("Figures/Harvest_fig2.bmp", plot = last_plot(), device = "bmp", path = NULL,
-  scale = 1, width = 190, height = 90, units = "mm",
-  dpi = 300, limitsize = TRUE)
-```
-
-
-
-Code from a previous figure showing harvest tertiles
-
-p2 <- ggplot(data = sortData3[sortData3$idMax >5,], aes(x=idPerc, y=cumWeightPerc, color=superhh2, shape=commname)) +
-   geom_point()+
-    #geom_path(size=0.5, linetype=3) +
-  geom_abline(slope=1, linetype="dashed", color = "black", alpha=0.5) +
-  scale_color_brewer()+
-   scale_x_continuous(name="Percent of community households", limits=c(0, 100), breaks=c(10,30,50,70,90)) +
-   scale_y_continuous(name="Percent of community harvest", limits=c(0, 100), breaks=c(10,30,50,70,90)) +
-   theme(axis.text=element_text(size=7),axis.title=element_text(size=7),legend.position=c(0.2, 0.8)) +
-   labs(color="Harvest amount (lbs) tertile",shape="Community")
-p2 
-
-
-theme_set(theme_cowplot(font_size=7))
-plot_grid(p, p2, labels = c("A", "B"), ncol = 2)
-ggsave("Figures/Harvest_and_efficiency.bmp", plot = last_plot(), device = "bmp", path = NULL,
-  scale = 1, width = 190, height = 90, units = "mm",
-  dpi = 300, limitsize = TRUE)
-
 ```
