@@ -72,7 +72,7 @@ an_gal_total (annual gasoline consumption in gallons per household) is log-norma
 hh_data2$gal_log <- log(hh_data2$an_gal_total)
 
 #Checking normal distribution fit
-Dplot <- car::qqPlot(hh_data2$gal_log, "norm", xlab="normal quantiles", ylab="log(gasoline consumption)",envelope=0.95, id=FALSE)
+Cplot <- car::qqPlot(hh_data2$gal_log, "norm", xlab="normal quantiles", ylab="log(gasoline consumption)",envelope=0.95, id=FALSE)
 
 #log-transforming income variable
 hh_data2$hhincadj_log <-ifelse(hh_data2$hhincadj==0,0,log(hh_data2$hhincadj))
@@ -95,7 +95,7 @@ modelData <- modelData%>%
 
 #preparing modelData for archiving
 ```{r}
-keepArchive <- c("an_gal_total","gal_log", "FishSumEdible1000", "LargeGameSumEdible1000", "atvs", "sms", "boats", "cars", "commname")
+keepArchive <- c("an_gal_total","gal_log", "FishSumEdible1000", "LargeGameSumEdible1000", "atvs", "sms", "boats", "cars", "commname", "hhincadj_log", "HHSIZE")
 archiveData <- hh_data3[keepArchive]
 commIDset <- read.csv("D:/Dropbox/DATA/2011_Schwoerer_subsistence_fuel_survey/commID.csv",stringsAsFactor=FALSE)
 archiveData <- archiveData%>%
@@ -103,7 +103,7 @@ archiveData <- archiveData%>%
     na.omit()
 archiveData <- archiveData[,-9]
 colnames(archiveData)[colnames(archiveData)=="commID"] <- "commname"
-write.csv(archiveData,"D:/Dropbox/DATA/2011_Schwoerer_subsistence_fuel_survey/archiveData.csv")
+write.csv(archiveData,"D:/Dropbox/DATA/2011_Schwoerer_subsistence_fuel_survey/archiveData.csv",row.names=FALSE)
 ```
 
 #Community characteristics
@@ -119,6 +119,7 @@ summary <- modelData%>%
             HH = median(HHSIZE),
             income = median(hhincadj),
             gal = median(an_gal_total),
+            gal_max = max(an_gal_total),
             fish = median(FishSumEdible1000)*1000,
             game = median(LargeGameSumEdible1000)*1000,
             total = median(total)*1000,
